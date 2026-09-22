@@ -2,7 +2,11 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from utils.document_parser import extract_all
-from utils.claude_client import build_profile_from_documents
+from utils.claude_client import (
+    build_profile_from_documents,
+    generate_backup_questions,
+    analyze_story,
+)
 
 load_dotenv()
 
@@ -13,6 +17,12 @@ if "step" not in st.session_state:
     st.session_state.step = 1
 if "profile" not in st.session_state:
     st.session_state.profile = None
+if "backup_questions" not in st.session_state:
+    st.session_state.backup_questions = None
+if "backup_answers" not in st.session_state:
+    st.session_state.backup_answers = {}
+if "story_analysis" not in st.session_state:
+    st.session_state.story_analysis = None
 
 st.title("🎯 Matchpoint")
 st.caption("Your AI job-matching and application agent")
@@ -125,7 +135,90 @@ if st.session_state.step == 1:
                 st.rerun()
 
 # ============================================================
-# STEPS 2-5 — placeholders for now
+# STEP 2 — YOUR STORY
+# ============================================================
+elif st.session_state.step == 2:
+    st.header("Step 2 — Tell us about a moment you were at your best")
+    st.write(
+        "Think of a specific moment — at work, school, with friends, "
+        "anywhere — when you felt genuinely proud of how you showed up."
+    )
+
+    if st.session_state.story_analysis is None:
+        story_text = st.text_area(
+            "Your story",
+            height=180,
+            placeholder="Take your time. What happened, what did you do, and why did it matter to you?",
+            key="story_input",
+        )
+
+        col_a, col_b = st.columns([1, 1])
+        with col_a:
+            submit_story = st.button("Continue →", type="primary", disabled=not story_text.strip())
+        with col_b:
+            stuck = st.button("I can't think of anything...")
+
+        # --- backup questions flow if user is stuck ---
+        if stuck:
+            with st.spinner("Generating some questions to help..."):
+                st.session_state.backup_questions = generate_backup_questions(
+                    st.session_state.profile
+                )
+            st.rerun()
+
+        if st.session_state.backup_questions:
+            st.divider()
+            st.subheader("Let's find one together — answer what resonates")
+            for i, q in enumerate(st.session_state.backup_questions):
+                st.session_state.backup_answers[i] = st.text_area(
+                    q, value=st.session_state.backup_answers.get(i, ""), key=f"backup_{i}"
+                )
+
+            if st.button("Build my story from these answers →", type="primary"):
+                combined = "\n\n".join(
+                    f"Q: {q}\nA: {st.session_state.backup_answers.get(i, '')}"
+                    for i, q in enumerate(st.session_state.backup_questions)
+                    if st.session_state.backup_answers.get(i, "").strip()
+                )
+                if combined:
+                    with st.spinner("Analyzing your story..."):
+                        st.session_state.story_analysis = analyze_story(
+                            combined, st.session_state.profile
+                        )
+                    st.rerun()
+                else:
+                    st.warning("Answer at least one question to continue.")
+
+        if submit_story:
+            with st.spinner("Analyzing your story..."):
+                st.session_state.story_analysis = analyze_story(
+                    story_text, st.session_state.profile
+                )
+            st.rerun()
+
+    # --- show analysis once available ---
+    else:
+        analysis = st.session_state.story_analysis
+        if "error" in analysis:
+            st.error("Couldn't analyze your story automatically.")
+            st.code(analysis.get("raw_response", ""))
+        else:
+            st.success("Here's what your story shows")
+            st.write(f"**Summary:** {analysis.get('summary', '—')}")
+            st.write("**Traits it reveals:**")
+            for t in analysis.get("traits", []):
+                st.write(f"- {t}")
+
+            if st.button("Continue to Step 3 →", type="primary"):
+                st.session_state.step = 3
+                st.rerun()
+
+    if st.button("← Back to Step 1"):
+        st.session_state.step = 1
+        st.rerun()
+
+# ============================================================
+# STEPS 3-5 — placeholders for now
 # ============================================================
 else:
     st.header(f"Step {st.session_state.step} — coming next")
