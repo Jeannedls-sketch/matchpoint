@@ -6,6 +6,7 @@ from utils.claude_client import (
     build_profile_from_documents,
     generate_backup_questions,
     analyze_story,
+    generate_strengths_report,
 )
 
 load_dotenv()
@@ -23,6 +24,12 @@ if "backup_answers" not in st.session_state:
     st.session_state.backup_answers = {}
 if "story_analysis" not in st.session_state:
     st.session_state.story_analysis = None
+if "strengths_ratings" not in st.session_state:
+    st.session_state.strengths_ratings = {}
+if "strengths_report" not in st.session_state:
+    st.session_state.strengths_report = None
+if "selected_growth_areas" not in st.session_state:
+    st.session_state.selected_growth_areas = []
 
 st.title("🎯 Matchpoint")
 st.caption("Your AI job-matching and application agent")
@@ -218,7 +225,68 @@ elif st.session_state.step == 2:
         st.rerun()
 
 # ============================================================
-# STEPS 3-5 — placeholders for now
+# STEP 3 — STRENGTHS
+# ============================================================
+elif st.session_state.step == 3:
+    st.header("Step 3 — Rate your strengths")
+
+    default_strengths = ["Problem-solving", "Communication", "Leadership", "Adaptability", "Attention to detail"]
+    strengths_list = st.session_state.story_analysis.get("suggested_strengths") or default_strengths
+
+    if st.session_state.strengths_report is None:
+        st.write("Rate yourself honestly on each — 1 (not a strength) to 5 (clear strength).")
+
+        for s in strengths_list:
+            st.session_state.strengths_ratings[s] = st.slider(
+                s, 1, 5, st.session_state.strengths_ratings.get(s, 3), key=f"rate_{s}"
+            )
+
+        if st.button("Generate my report →", type="primary"):
+            with st.spinner("Building your strengths report..."):
+                report = generate_strengths_report(
+                    st.session_state.strengths_ratings,
+                    st.session_state.profile,
+                    st.session_state.story_analysis,
+                )
+                st.session_state.strengths_report = report
+            st.rerun()
+
+    else:
+        report = st.session_state.strengths_report
+        if "error" in report:
+            st.error("Couldn't generate the report automatically.")
+            st.code(report.get("raw_response", ""))
+        else:
+            st.success("Here's your strengths report")
+            st.write(report.get("narrative", ""))
+
+            st.subheader("✅ Confirmed strengths")
+            for s in report.get("confirmed_strengths", []):
+                st.write(f"- {s}")
+
+            growth_areas = report.get("growth_areas", [])
+            if growth_areas:
+                st.subheader("🌱 Growth areas")
+                st.write("Pick the ones that matter most to you right now:")
+                labels = [g["area"] for g in growth_areas]
+                notes_by_label = {g["area"]: g.get("note", "") for g in growth_areas}
+                selected = st.multiselect("Select growth areas", labels, default=st.session_state.selected_growth_areas)
+                st.session_state.selected_growth_areas = selected
+                for s in selected:
+                    st.caption(f"**{s}:** {notes_by_label.get(s, '')}")
+            else:
+                st.info("No major growth areas flagged from your ratings — strong across the board!")
+
+            if st.button("Continue to Step 4 →", type="primary"):
+                st.session_state.step = 4
+                st.rerun()
+
+    if st.button("← Back to Step 2"):
+        st.session_state.step = 2
+        st.rerun()
+
+# ============================================================
+# STEPS 4-5 — placeholders for now
 # ============================================================
 else:
     st.header(f"Step {st.session_state.step} — coming next")
