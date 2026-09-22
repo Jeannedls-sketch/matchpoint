@@ -170,3 +170,43 @@ Respond ONLY with valid JSON:
 
     user_content = f"Candidate background:\n{json.dumps(profile, ensure_ascii=False)}\n\nTheir story:\n{story_text}"
     return _call_json(system_prompt, user_content)
+
+
+def generate_strengths_report(ratings: dict, profile: dict, story_analysis: dict) -> dict:
+    """
+    Step 3: given the candidate's 1-5 self-ratings on a list of strengths,
+    generate a short report. Low ratings (<=2) become candidate "growth areas"
+    (framed constructively, not as "weaknesses" bluntly); high ratings (>=4)
+    are confirmed as core strengths. If everything is rated high, growth_areas
+    can be an empty list - that's a valid outcome, not an error.
+
+    ratings: dict of {strength_label: int (1-5)}
+
+    Returns:
+        {
+            "confirmed_strengths": [string],
+            "growth_areas": [{"area": string, "note": string}],
+            "narrative": string   # 2-3 sentence overview tying it together
+        }
+    """
+    system_prompt = """You are a career coach reviewing a candidate's self-ratings (1-5 scale,
+5 = very strong) on a set of strengths, in the context of their background and
+a story they told about a moment they were at their best.
+
+Produce:
+- "confirmed_strengths": labels rated 4-5, framed as genuine strengths
+- "growth_areas": labels rated 1-2, each with a short constructive "note"
+  (never harsh, framed as development opportunities, not deficiencies).
+  If nothing was rated 1-2, return an empty list - do not invent weaknesses.
+- "narrative": 2-3 warm, honest sentences tying the ratings together in the
+  context of their story and background.
+
+Respond ONLY with valid JSON:
+{"confirmed_strengths": [string], "growth_areas": [{"area": string, "note": string}], "narrative": string}"""
+
+    user_content = (
+        f"Candidate background:\n{json.dumps(profile, ensure_ascii=False)}\n\n"
+        f"Their story summary: {story_analysis.get('summary', '')}\n\n"
+        f"Self-ratings (1-5):\n{json.dumps(ratings, ensure_ascii=False)}"
+    )
+    return _call_json(system_prompt, user_content)
