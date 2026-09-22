@@ -95,3 +95,78 @@ based on the cover letter in the documents if present, else "not enough data".""
             "error": "Could not parse model response as JSON",
             "raw_response": raw_text,
         }
+
+
+def _call_json(system_prompt: str, user_content: str, max_tokens: int = 1500) -> dict:
+    """Shared helper: call Claude, expect JSON back, parse it defensively."""
+    client = get_client()
+    response = client.messages.create(
+        model=MODEL,
+        max_tokens=max_tokens,
+        system=system_prompt,
+        messages=[{"role": "user", "content": user_content}],
+    )
+    raw_text = response.content[0].text.strip()
+    if raw_text.startswith("```"):
+        raw_text = raw_text.strip("`")
+        if raw_text.startswith("json"):
+            raw_text = raw_text[4:]
+    try:
+        return json.loads(raw_text)
+    except json.JSONDecodeError:
+        return {"error": "Could not parse model response as JSON", "raw_response": raw_text}
+
+
+def generate_backup_questions(profile: dict) -> list:
+    """
+    Step 2 (when the user can't think of a 'best self' story on their own):
+    generate 4-5 guided backup questions, personalized using their profile,
+    to help them find a moment to talk about.
+
+    Returns a list of question strings.
+    """
+    system_prompt = """You help candidates who are stuck finding a "moment when I was at my best"
+to tell for a career-matching tool. Generate 4-5 short, warm, guided backup
+questions that help them locate a specific memory - not generic prompts, but
+questions that nudge toward concrete moments (a project, a challenge overcome,
+a time they helped someone, a skill they used well).
+
+Personalize lightly using their background (education/experience) if relevant,
+but keep questions broadly answerable even if they draw a blank on work life
+(e.g. school, sports, family, volunteering all count).
+
+Respond ONLY with valid JSON: {"questions": [string, string, ...]}"""
+
+    user_content = f"Candidate background:\n{json.dumps(profile, ensure_ascii=False)}"
+    result = _call_json(system_prompt, user_content)
+    return result.get("questions", []) if "error" not in result else []
+
+
+def analyze_story(story_text: str, profile: dict) -> dict:
+    """
+    Step 2 output: analyze the candidate's "best self" story (whether they
+    wrote it directly or answered backup questions) and extract traits/strengths
+    to carry into Step 3.
+
+    Returns a dict:
+        {
+            "summary": short paraphrase of the story,
+            "traits": [string],       # e.g. "resilience", "attention to detail"
+            "suggested_strengths": [string]  # to pre-fill step 3's rating list
+        }
+    """
+    system_prompt = """You are a career coach analyzing a candidate's story about a moment
+they were at their best, for a career-matching tool.
+
+Read the story and extract:
+- a short (1-2 sentence) neutral summary of what happened
+- a list of underlying traits/soft skills demonstrated (e.g. "resilience",
+  "collaborative leadership", "analytical thinking") - 3 to 6 traits
+- a list of concrete strengths worth rating in the next step (short labels,
+  e.g. "Problem-solving", "Communication", "Initiative") - 4 to 8 items
+
+Respond ONLY with valid JSON:
+{"summary": string, "traits": [string], "suggested_strengths": [string]}"""
+
+    user_content = f"Candidate background:\n{json.dumps(profile, ensure_ascii=False)}\n\nTheir story:\n{story_text}"
+    return _call_json(system_prompt, user_content)
