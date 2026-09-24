@@ -14,6 +14,7 @@ from utils.claude_client import (
     generate_mock_job_listings,
     tailor_application,
 )
+from utils.pdf_generator import generate_cv_pdf, generate_cover_letter_pdf
 
 load_dotenv()
 
@@ -46,6 +47,22 @@ if "job_listings" not in st.session_state:
     st.session_state.job_listings = None
 if "approved_job" not in st.session_state:
     st.session_state.approved_job = None
+if "tailored_applications" not in st.session_state:
+    st.session_state.tailored_applications = {}  # key: "title|||company" -> tailored dict
+if "job_status" not in st.session_state:
+    st.session_state.job_status = {}  # key -> {"interested": None/True/False, "cv_generated": bool, "applied": bool}
+if "step4_phase" not in st.session_state:
+    st.session_state.step4_phase = "review"  # "review" -> browse & mark interest | "selected" -> generate applications
+
+
+def _job_key(job):
+    return f"{job.get('title')}|||{job.get('company')}"
+
+
+def _ensure_status(job_key):
+    if job_key not in st.session_state.job_status:
+        st.session_state.job_status[job_key] = {"interested": None, "cv_generated": False, "applied": False}
+    return st.session_state.job_status[job_key]
 if "tailored_application" not in st.session_state:
     st.session_state.tailored_application = None
 if "application_log" not in st.session_state:
@@ -374,19 +391,140 @@ elif st.session_state.step == 4:
                         st.session_state.override_mode = False
                     st.rerun()
 
-    # --- part C: job listings, approve one ---
+    # --- part C: two phases — review/select, then generate applications for selected only ---
     else:
-        st.subheader("Your matches")
-        for i, job in enumerate(st.session_state.job_listings):
-            with st.container(border=True):
-                st.write(f"**{job.get('title')}** — {job.get('company')} · {job.get('location')}")
-                st.write(job.get("description", ""))
-                st.progress(job.get("match_score", 0) / 100, text=f"Match: {job.get('match_score', 0)}%")
-                st.caption(job.get("match_reason", ""))
-                if st.button("Approve this one →", key=f"approve_{i}"):
-                    st.session_state.approved_job = job
-                    st.session_state.step = 5
+        all_jobs = st.session_state.job_listings
+
+        # === PHASE 1: browse all jobs, mark interest only ===
+        if st.session_state.step4_phase == "review":
+            st.subheader("Your matches")
+            st.caption(f"{len(all_jobs)} jobs found — mark what interests you, then move to the next step.")
+
+            by_category = {}
+            for job in all_jobs:
+                by_category.setdefault(job.get("category", "Other"), []).append(job)
+
+            category_order = ["Consulting", "Finance", "Tech", "Other"]
+            ordered_cats = [c for c in category_order if c in by_category] + \
+                           [c for c in by_category if c not in category_order]
+
+            for cat in ordered_cats:
+                jobs_in_cat = by_category[cat]
+                with st.expander(f"**{cat}** ({len(jobs_in_cat)})", expanded=(cat == ordered_cats[0])):
+                    for job in jobs_in_cat:
+                        job_key = _job_key(job)
+                        status = _ensure_status(job_key)
+                        with st.container(border=True):
+                            st.write(f"**{job.get('title')}** — {job.get('company')} · {job.get('location')}")
+                            st.write(job.get("description", ""))
+                            st.progress(job.get("match_score", 0) / 100, text=f"Match: {job.get('match_score', 0)}%")
+                            st.caption(job.get("match_reason", ""))
+
+                            col_i1, col_i2 = st.columns([1, 1])
+                            with col_i1:
+                                if st.button(
+                                    "👍 Interested" if status["interested"] is not True else "👍 Interested ✓",
+                                    key=f"int_yes_{job_key}",
+                                    type="primary" if status["interested"] is True else "secondary",
+                                ):
+                                    status["interested"] = True
+                                    st.rerun()
+                            with col_i2:
+                                if st.button(
+                                    "👎 Not for me" if status["interested"] is not False else "👎 Not for me ✓",
+                                    key=f"int_no_{job_key}",
+                                    type="primary" if status["interested"] is False else "secondary",
+                                ):
+                                    status["interested"] = False
+                                    st.rerun()
+
+            selected_count = sum(1 for j in all_jobs if st.session_state.job_status.get(_job_key(j), {}).get("interested") is True)
+            st.divider()
+            if selected_count > 0:
+                if st.button(f"Next → Review my {selected_count} selected job(s)", type="primary"):
+                    st.session_state.step4_phase = "selected"
                     st.rerun()
+            else:
+                st.info("Mark at least one job as 👍 Interested to continue.")
+
+        # === PHASE 2: only selected jobs, generate CV & cover letter here ===
+        else:
+            selected_jobs = [j for j in all_jobs if st.session_state.job_status.get(_job_key(j), {}).get("interested") is True]
+
+            st.subheader(f"Your {len(selected_jobs)} selected job(s)")
+            if st.button("← Back to browse all jobs"):
+                st.session_state.step4_phase = "review"
+                st.rerun()
+
+            for job in selected_jobs:
+                job_key = _job_key(job)
+                status = _ensure_status(job_key)
+                with st.container(border=True):
+                    st.write(f"**{job.get('title')}** — {job.get('company')} · {job.get('location')} · {job.get('category')}")
+                    st.write(job.get("description", ""))
+                    st.progress(job.get("match_score", 0) / 100, text=f"Match: {job.get('match_score', 0)}%")
+
+                    already_generated = job_key in st.session_state.tailored_applications
+
+                    if not already_generated:
+                        if st.button("Generate CV & Cover Letter →", key=f"gen_{job_key}"):
+                            with st.spinner("Tailoring your CV and cover letter..."):
+                                tailored = tailor_application(
+                                    job, st.session_state.profile, st.session_state.story_analysis
+                                )
+                                entry = {"job": job, "tailored": tailored}
+                                if "error" not in tailored:
+                                    entry["cv_pdf"] = generate_cv_pdf(st.session_state.profile, tailored, job)
+                                    entry["cl_pdf"] = generate_cover_letter_pdf(
+                                        tailored.get("cover_letter", ""), st.session_state.profile, job
+                                    )
+                                st.session_state.tailored_applications[job_key] = entry
+                                status["cv_generated"] = True
+                            st.rerun()
+                    else:
+                        entry = st.session_state.tailored_applications[job_key]
+                        tailored = entry["tailored"]
+                        st.success("✅ Application generated")
+                        if "error" in tailored:
+                            st.error("Couldn't generate the tailored application automatically.")
+                            st.code(tailored.get("raw_response", ""))
+                        else:
+                            col_a, col_b = st.columns(2)
+                            with col_a:
+                                st.write("**CV highlights**")
+                                for h in tailored.get("cv_highlights", []):
+                                    st.write(f"- {h}")
+                                if "cv_pdf" in entry:
+                                    st.download_button(
+                                        "⬇ Download CV (PDF)", data=entry["cv_pdf"],
+                                        file_name=f"CV_{job.get('company')}.pdf", mime="application/pdf",
+                                        key=f"dl_cv_{job_key}",
+                                    )
+                            with col_b:
+                                st.write("**Cover letter**")
+                                st.text_area(
+                                    "", value=tailored.get("cover_letter", ""),
+                                    height=180, disabled=True, key=f"cl_{job_key}",
+                                    label_visibility="collapsed",
+                                )
+                                if "cl_pdf" in entry:
+                                    st.download_button(
+                                        "⬇ Download Cover Letter (PDF)", data=entry["cl_pdf"],
+                                        file_name=f"CoverLetter_{job.get('company')}.pdf", mime="application/pdf",
+                                        key=f"dl_cl_{job_key}",
+                                    )
+
+                            if not status["applied"]:
+                                if st.button("Mark as applied ✔", key=f"apply_{job_key}"):
+                                    status["applied"] = True
+                                    st.rerun()
+                            else:
+                                st.info("📨 Marked as applied")
+
+            st.divider()
+            if st.button("Go to Dashboard →", type="primary"):
+                st.session_state.step = 5
+                st.rerun()
 
     if st.button("← Back to Step 3"):
         st.session_state.step = 3
@@ -398,64 +536,94 @@ elif st.session_state.step == 4:
 elif st.session_state.step == 5:
     st.header("🎯 Your Dashboard")
 
-    job = st.session_state.approved_job
+    applications = st.session_state.tailored_applications
+    all_jobs = st.session_state.job_listings or []
 
-    # generate tailored CV/cover letter once, on first arrival
-    if st.session_state.tailored_application is None and job is not None:
-        with st.spinner("Tailoring your CV and cover letter for this role..."):
-            st.session_state.tailored_application = tailor_application(
-                job, st.session_state.profile, st.session_state.story_analysis
-            )
-            st.session_state.application_log.append(
-                {"title": job.get("title"), "company": job.get("company"), "status": "Submitted"}
-            )
+    interested_count = sum(1 for j in all_jobs if st.session_state.job_status.get(_job_key(j), {}).get("interested") is True)
+    applied_count = sum(1 for s in st.session_state.job_status.values() if s.get("applied"))
 
     # --- top metrics ---
-    col1, col2, col3 = st.columns(3)
-    col1.metric("Jobs reviewed", len(st.session_state.job_listings or []))
-    col2.metric("Applications submitted", len(st.session_state.application_log))
-    col3.metric(
-        "Best match score",
-        f"{max((j.get('match_score', 0) for j in st.session_state.job_listings or [{'match_score': 0}]), default=0)}%",
-    )
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Jobs reviewed", len(all_jobs))
+    col2.metric("Interested", interested_count)
+    col3.metric("CVs generated", len(applications))
+    col4.metric("Applications sent", applied_count)
 
     st.divider()
 
-    # --- match score chart ---
-    if st.session_state.job_listings:
-        df = pd.DataFrame(st.session_state.job_listings)
+    # --- match score chart, colored by category ---
+    if all_jobs:
+        df = pd.DataFrame(all_jobs)
         fig = px.bar(
-            df, x="title", y="match_score", color="match_score",
-            color_continuous_scale="Blues", title="Match scores across reviewed jobs",
+            df, x="title", y="match_score", color="category",
+            title="Match scores across reviewed jobs",
         )
-        fig.update_layout(xaxis_title="", yaxis_title="Match %", showlegend=False)
+        fig.update_layout(xaxis_title="", yaxis_title="Match %")
         st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
 
-    # --- application tracking table ---
-    st.subheader("Application tracking")
-    if st.session_state.application_log:
-        st.dataframe(pd.DataFrame(st.session_state.application_log), use_container_width=True, hide_index=True)
+    # --- full tracker table: every job reviewed, with its full status ---
+    st.subheader("Application tracker")
+    if all_jobs:
+        def _status_icon(job):
+            key = _job_key(job)
+            s = st.session_state.job_status.get(key, {})
+            interested = s.get("interested")
+            interested_label = "👍 Yes" if interested is True else ("👎 No" if interested is False else "— Not reviewed")
+            return {
+                "Title": job.get("title"),
+                "Company": job.get("company"),
+                "Category": job.get("category"),
+                "Match": f"{job.get('match_score', 0)}%",
+                "Interested": interested_label,
+                "CV generated": "✅" if s.get("cv_generated") else "—",
+                "Applied": "📨 Sent" if s.get("applied") else "—",
+            }
+
+        tracker_df = pd.DataFrame([_status_icon(j) for j in all_jobs])
+        st.dataframe(tracker_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No jobs reviewed yet.")
 
     st.divider()
 
-    # --- tailored CV + cover letter preview ---
-    tailored = st.session_state.tailored_application
-    if tailored and "error" not in tailored:
-        st.subheader(f"Tailored for: {job.get('title')} at {job.get('company')}")
-
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.write("**CV highlights**")
-            for h in tailored.get("cv_highlights", []):
-                st.write(f"- {h}")
-        with col_b:
-            st.write("**Cover letter**")
-            st.text_area("", value=tailored.get("cover_letter", ""), height=280, disabled=True, label_visibility="collapsed")
-    elif tailored:
-        st.error("Couldn't generate the tailored application automatically.")
-        st.code(tailored.get("raw_response", ""))
+    # --- tailored CV + cover letter preview, one section per generated application ---
+    if applications:
+        st.subheader("Tailored applications")
+        for job_key, entry in applications.items():
+            job = entry["job"]
+            tailored = entry["tailored"]
+            applied = st.session_state.job_status.get(job_key, {}).get("applied", False)
+            label = f"{'📨 ' if applied else ''}{job.get('title')} — {job.get('company')}"
+            with st.expander(label):
+                if "error" in tailored:
+                    st.error("Couldn't generate the tailored application automatically.")
+                    st.code(tailored.get("raw_response", ""))
+                else:
+                    col_a, col_b = st.columns(2)
+                    with col_a:
+                        st.write("**CV highlights**")
+                        for h in tailored.get("cv_highlights", []):
+                            st.write(f"- {h}")
+                        if "cv_pdf" in entry:
+                            st.download_button(
+                                "⬇ Download CV (PDF)", data=entry["cv_pdf"],
+                                file_name=f"CV_{job.get('company')}.pdf", mime="application/pdf",
+                                key=f"dash_dl_cv_{job_key}",
+                            )
+                    with col_b:
+                        st.write("**Cover letter**")
+                        st.text_area(
+                            "", value=tailored.get("cover_letter", ""), height=250,
+                            disabled=True, key=f"dash_cl_{job_key}", label_visibility="collapsed",
+                        )
+                        if "cl_pdf" in entry:
+                            st.download_button(
+                                "⬇ Download Cover Letter (PDF)", data=entry["cl_pdf"],
+                                file_name=f"CoverLetter_{job.get('company')}.pdf", mime="application/pdf",
+                                key=f"dash_dl_cl_{job_key}",
+                            )
 
     if st.button("← Back to Step 4"):
         st.session_state.step = 4
