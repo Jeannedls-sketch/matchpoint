@@ -210,3 +210,135 @@ Respond ONLY with valid JSON:
         f"Self-ratings (1-5):\n{json.dumps(ratings, ensure_ascii=False)}"
     )
     return _call_json(system_prompt, user_content)
+
+
+def suggest_industries_and_roles(profile: dict, story_analysis: dict, strengths_report: dict, values_answers: dict) -> dict:
+    """
+    Step 4 (part 1): using everything gathered so far (profile, story, strengths,
+    and values/interests Q&A), suggest industries and specific roles.
+
+    values_answers: dict of {question: answer}
+
+    Returns:
+        {
+            "suggested_industries": [string],
+            "suggested_roles": [string],
+            "reasoning": string   # short explanation tying suggestions to the candidate's profile
+        }
+    """
+    system_prompt = """You are a career advisor. Using the candidate's full profile (background,
+story, confirmed strengths, and stated values/interests), suggest:
+- 3-5 industries that would genuinely fit them
+- 3-5 specific job roles/titles within those industries
+- a short (2-3 sentence) reasoning connecting the suggestions to specifics
+  from their profile (not generic career advice)
+
+Respond ONLY with valid JSON:
+{"suggested_industries": [string], "suggested_roles": [string], "reasoning": string}"""
+
+    user_content = (
+        f"Profile:\n{json.dumps(profile, ensure_ascii=False)}\n\n"
+        f"Story summary: {story_analysis.get('summary', '')}\n"
+        f"Traits: {story_analysis.get('traits', [])}\n\n"
+        f"Confirmed strengths: {strengths_report.get('confirmed_strengths', [])}\n\n"
+        f"Values/interests Q&A:\n{json.dumps(values_answers, ensure_ascii=False)}"
+    )
+    return _call_json(system_prompt, user_content)
+
+
+def adjust_suggestions(previous_suggestions: dict, override_text: str, profile: dict) -> dict:
+    """
+    Step 4 (override path): the candidate disagreed with the suggested
+    industries/roles and explained what they actually want. Regenerate
+    suggestions honoring their stated preference.
+
+    Returns the same shape as suggest_industries_and_roles.
+    """
+    system_prompt = """You are a career advisor. The candidate was given industry/role suggestions
+but disagreed and told you what they actually want. Regenerate the suggestions
+to honor their stated preference - take it at face value, don't argue with it,
+just tailor specific roles and reasoning around what they asked for.
+
+Respond ONLY with valid JSON:
+{"suggested_industries": [string], "suggested_roles": [string], "reasoning": string}"""
+
+    user_content = (
+        f"Profile:\n{json.dumps(profile, ensure_ascii=False)}\n\n"
+        f"Previous suggestions: {json.dumps(previous_suggestions, ensure_ascii=False)}\n\n"
+        f"Candidate's correction: {override_text}"
+    )
+    return _call_json(system_prompt, user_content)
+
+
+def generate_mock_job_listings(suggestions: dict, profile: dict, n: int = 6) -> list:
+    """
+    Step 4 (part 2, demo data): generate realistic-looking MOCK job listings
+    matching the suggested roles/industries, each scored against the candidate's
+    profile. These are fabricated for demo purposes (per project plan: real
+    job boards restrict automated scraping/submission, so the demo uses
+    prepared listings while the AI matching/scoring itself is real).
+
+    Returns a list of dicts:
+        {
+            "title": string, "company": string, "location": string,
+            "description": string, "apply_link": string (placeholder),
+            "match_score": int (0-100), "match_reason": string
+        }
+    """
+    system_prompt = f"""Generate {n} realistic but FICTIONAL job listings matching the given
+suggested roles/industries, for a career-matching tool demo. Make them varied
+and plausible (real-sounding but invented company names, real cities).
+
+For each listing, also score how well it matches the candidate profile (0-100)
+with a short one-sentence reason.
+
+Respond ONLY with valid JSON:
+{{"jobs": [{{"title": string, "company": string, "location": string,
+"description": string, "match_score": integer, "match_reason": string}}, ...]}}"""
+
+    user_content = (
+        f"Suggested industries: {suggestions.get('suggested_industries', [])}\n"
+        f"Suggested roles: {suggestions.get('suggested_roles', [])}\n\n"
+        f"Candidate profile:\n{json.dumps(profile, ensure_ascii=False)}"
+    )
+    result = _call_json(system_prompt, user_content, max_tokens=3000)
+    jobs = result.get("jobs", []) if "error" not in result else []
+    # add a placeholder apply link since these are mock listings, not real ones
+    for j in jobs:
+        j["apply_link"] = "#"
+    jobs.sort(key=lambda j: j.get("match_score", 0), reverse=True)
+    return jobs
+
+
+def tailor_application(approved_job: dict, profile: dict, story_analysis: dict) -> dict:
+    """
+    Step 5: generate a tailored CV summary (bullet highlights reordered/reworded
+    to fit the approved job) and a tailored cover letter, matching the
+    candidate's captured writing tone from Step 1.
+
+    Returns:
+        {
+            "cv_highlights": [string],   # reworded/reordered bullets for this job
+            "cover_letter": string
+        }
+    """
+    system_prompt = """You are a career assistant tailoring a candidate's application to one
+specific job. Using their profile and the job details, produce:
+
+- "cv_highlights": 4-6 bullet points, drawn from their real experience/skills,
+  reworded and reordered to foreground what matters most for THIS job.
+  Never invent experience that isn't in their profile.
+- "cover_letter": a short (3-4 paragraph) cover letter for this job, written
+  in the candidate's captured writing tone if available. Reference one
+  concrete detail from their story if it's relevant to the role.
+
+Respond ONLY with valid JSON:
+{"cv_highlights": [string], "cover_letter": string}"""
+
+    user_content = (
+        f"Job:\n{json.dumps(approved_job, ensure_ascii=False)}\n\n"
+        f"Candidate profile:\n{json.dumps(profile, ensure_ascii=False)}\n\n"
+        f"Story summary: {story_analysis.get('summary', '')}\n"
+        f"Writing tone notes: {profile.get('writing_tone_notes', 'not specified')}"
+    )
+    return _call_json(system_prompt, user_content, max_tokens=2000)
