@@ -1,4 +1,6 @@
 import streamlit as st
+import pandas as pd
+import plotly.express as px
 from dotenv import load_dotenv
 
 from utils.document_parser import extract_all
@@ -7,6 +9,10 @@ from utils.claude_client import (
     generate_backup_questions,
     analyze_story,
     generate_strengths_report,
+    suggest_industries_and_roles,
+    adjust_suggestions,
+    generate_mock_job_listings,
+    tailor_application,
 )
 
 load_dotenv()
@@ -30,6 +36,20 @@ if "strengths_report" not in st.session_state:
     st.session_state.strengths_report = None
 if "selected_growth_areas" not in st.session_state:
     st.session_state.selected_growth_areas = []
+if "values_answers" not in st.session_state:
+    st.session_state.values_answers = {}
+if "suggestions" not in st.session_state:
+    st.session_state.suggestions = None
+if "override_mode" not in st.session_state:
+    st.session_state.override_mode = False
+if "job_listings" not in st.session_state:
+    st.session_state.job_listings = None
+if "approved_job" not in st.session_state:
+    st.session_state.approved_job = None
+if "tailored_application" not in st.session_state:
+    st.session_state.tailored_application = None
+if "application_log" not in st.session_state:
+    st.session_state.application_log = []
 
 st.title("🎯 Matchpoint")
 st.caption("Your AI job-matching and application agent")
@@ -286,11 +306,157 @@ elif st.session_state.step == 3:
         st.rerun()
 
 # ============================================================
-# STEPS 4-5 — placeholders for now
+# STEP 4 — VALUES & MATCHES
 # ============================================================
-else:
-    st.header(f"Step {st.session_state.step} — coming next")
-    st.info("This step isn't built yet — we'll add it next.")
-    if st.button("← Back"):
-        st.session_state.step -= 1
+elif st.session_state.step == 4:
+    st.header("Step 4 — Your values, and your matches")
+
+    VALUES_QUESTIONS = [
+        "What matters most to you in your next role? (impact, learning, pay, flexibility, prestige...)",
+        "What kind of work environment do you thrive in?",
+        "Any industries or company types you'd love — or want to avoid?",
+        "Anything else about what you're looking for?",
+    ]
+
+    # --- part A: values Q&A + suggestions ---
+    if st.session_state.suggestions is None:
+        st.subheader("A few questions about what you value")
+        for i, q in enumerate(VALUES_QUESTIONS):
+            st.session_state.values_answers[q] = st.text_area(
+                q, value=st.session_state.values_answers.get(q, ""), key=f"values_{i}"
+            )
+
+        if st.button("Get my suggestions →", type="primary"):
+            with st.spinner("Thinking about what could fit you..."):
+                st.session_state.suggestions = suggest_industries_and_roles(
+                    st.session_state.profile,
+                    st.session_state.story_analysis,
+                    st.session_state.strengths_report,
+                    st.session_state.values_answers,
+                )
+            st.rerun()
+
+    # --- part B: show suggestions, allow override, then generate matches ---
+    elif st.session_state.job_listings is None:
+        suggestions = st.session_state.suggestions
+        if "error" in suggestions:
+            st.error("Couldn't generate suggestions automatically.")
+            st.code(suggestions.get("raw_response", ""))
+        else:
+            st.subheader("Suggested for you")
+            st.write(suggestions.get("reasoning", ""))
+            st.write("**Industries:** " + ", ".join(suggestions.get("suggested_industries", [])))
+            st.write("**Roles:** " + ", ".join(suggestions.get("suggested_roles", [])))
+
+            col_a, col_b = st.columns([1, 1])
+            with col_a:
+                if st.button("This looks right → Find matching jobs", type="primary"):
+                    with st.spinner("Searching for matching roles..."):
+                        st.session_state.job_listings = generate_mock_job_listings(
+                            suggestions, st.session_state.profile
+                        )
+                    st.rerun()
+            with col_b:
+                if st.button("I don't agree with this"):
+                    st.session_state.override_mode = True
+
+            if st.session_state.override_mode:
+                st.divider()
+                override_text = st.text_area(
+                    "Tell us what you actually want instead — we'll tailor the next steps for you.",
+                    placeholder="e.g. I really want to do consulting, please focus there instead.",
+                )
+                if st.button("Update my suggestions →", type="primary", disabled=not override_text.strip()):
+                    with st.spinner("Updating your suggestions..."):
+                        st.session_state.suggestions = adjust_suggestions(
+                            suggestions, override_text, st.session_state.profile
+                        )
+                        st.session_state.override_mode = False
+                    st.rerun()
+
+    # --- part C: job listings, approve one ---
+    else:
+        st.subheader("Your matches")
+        for i, job in enumerate(st.session_state.job_listings):
+            with st.container(border=True):
+                st.write(f"**{job.get('title')}** — {job.get('company')} · {job.get('location')}")
+                st.write(job.get("description", ""))
+                st.progress(job.get("match_score", 0) / 100, text=f"Match: {job.get('match_score', 0)}%")
+                st.caption(job.get("match_reason", ""))
+                if st.button("Approve this one →", key=f"approve_{i}"):
+                    st.session_state.approved_job = job
+                    st.session_state.step = 5
+                    st.rerun()
+
+    if st.button("← Back to Step 3"):
+        st.session_state.step = 3
+        st.rerun()
+
+# ============================================================
+# STEP 5 — DASHBOARD
+# ============================================================
+elif st.session_state.step == 5:
+    st.header("🎯 Your Dashboard")
+
+    job = st.session_state.approved_job
+
+    # generate tailored CV/cover letter once, on first arrival
+    if st.session_state.tailored_application is None and job is not None:
+        with st.spinner("Tailoring your CV and cover letter for this role..."):
+            st.session_state.tailored_application = tailor_application(
+                job, st.session_state.profile, st.session_state.story_analysis
+            )
+            st.session_state.application_log.append(
+                {"title": job.get("title"), "company": job.get("company"), "status": "Submitted"}
+            )
+
+    # --- top metrics ---
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Jobs reviewed", len(st.session_state.job_listings or []))
+    col2.metric("Applications submitted", len(st.session_state.application_log))
+    col3.metric(
+        "Best match score",
+        f"{max((j.get('match_score', 0) for j in st.session_state.job_listings or [{'match_score': 0}]), default=0)}%",
+    )
+
+    st.divider()
+
+    # --- match score chart ---
+    if st.session_state.job_listings:
+        df = pd.DataFrame(st.session_state.job_listings)
+        fig = px.bar(
+            df, x="title", y="match_score", color="match_score",
+            color_continuous_scale="Blues", title="Match scores across reviewed jobs",
+        )
+        fig.update_layout(xaxis_title="", yaxis_title="Match %", showlegend=False)
+        st.plotly_chart(fig, use_container_width=True)
+
+    st.divider()
+
+    # --- application tracking table ---
+    st.subheader("Application tracking")
+    if st.session_state.application_log:
+        st.dataframe(pd.DataFrame(st.session_state.application_log), use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # --- tailored CV + cover letter preview ---
+    tailored = st.session_state.tailored_application
+    if tailored and "error" not in tailored:
+        st.subheader(f"Tailored for: {job.get('title')} at {job.get('company')}")
+
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.write("**CV highlights**")
+            for h in tailored.get("cv_highlights", []):
+                st.write(f"- {h}")
+        with col_b:
+            st.write("**Cover letter**")
+            st.text_area("", value=tailored.get("cover_letter", ""), height=280, disabled=True, label_visibility="collapsed")
+    elif tailored:
+        st.error("Couldn't generate the tailored application automatically.")
+        st.code(tailored.get("raw_response", ""))
+
+    if st.button("← Back to Step 4"):
+        st.session_state.step = 4
         st.rerun()
