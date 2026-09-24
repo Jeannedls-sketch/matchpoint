@@ -270,18 +270,21 @@ Respond ONLY with valid JSON:
     return _call_json(system_prompt, user_content)
 
 
-def generate_mock_job_listings(suggestions: dict, profile: dict, n: int = 6) -> list:
+def generate_mock_job_listings(suggestions: dict, profile: dict, n: int = 12) -> list:
     """
     Step 4 (part 2, demo data): generate realistic-looking MOCK job listings
     matching the suggested roles/industries, each scored against the candidate's
-    profile. These are fabricated for demo purposes (per project plan: real
-    job boards restrict automated scraping/submission, so the demo uses
-    prepared listings while the AI matching/scoring itself is real).
+    profile and tagged with a category so the UI can group them into sections.
+    These are fabricated for demo purposes (per project plan: real job boards
+    restrict automated scraping/submission, so the demo uses prepared listings
+    while the AI matching/scoring itself is real).
 
     Returns a list of dicts:
         {
             "title": string, "company": string, "location": string,
-            "description": string, "apply_link": string (placeholder),
+            "description": string, "category": string (one of
+            "Consulting", "Finance", "Tech", "Other"),
+            "apply_link": string (placeholder),
             "match_score": int (0-100), "match_reason": string
         }
     """
@@ -289,23 +292,31 @@ def generate_mock_job_listings(suggestions: dict, profile: dict, n: int = 6) -> 
 suggested roles/industries, for a career-matching tool demo. Make them varied
 and plausible (real-sounding but invented company names, real cities).
 
+Distribute listings across these categories based on fit: "Consulting", "Finance",
+"Tech", "Other" - aim for a spread across at least 3 categories rather than
+clustering all listings in one, unless the candidate's profile clearly points
+to just one or two categories.
+
 For each listing, also score how well it matches the candidate profile (0-100)
 with a short one-sentence reason.
 
 Respond ONLY with valid JSON:
 {{"jobs": [{{"title": string, "company": string, "location": string,
-"description": string, "match_score": integer, "match_reason": string}}, ...]}}"""
+"description": string, "category": string, "match_score": integer,
+"match_reason": string}}, ...]}}"""
 
     user_content = (
         f"Suggested industries: {suggestions.get('suggested_industries', [])}\n"
         f"Suggested roles: {suggestions.get('suggested_roles', [])}\n\n"
         f"Candidate profile:\n{json.dumps(profile, ensure_ascii=False)}"
     )
-    result = _call_json(system_prompt, user_content, max_tokens=3000)
+    result = _call_json(system_prompt, user_content, max_tokens=4000)
     jobs = result.get("jobs", []) if "error" not in result else []
     # add a placeholder apply link since these are mock listings, not real ones
     for j in jobs:
         j["apply_link"] = "#"
+        if not j.get("category"):
+            j["category"] = "Other"
     jobs.sort(key=lambda j: j.get("match_score", 0), reverse=True)
     return jobs
 
