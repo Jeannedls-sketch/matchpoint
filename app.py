@@ -18,7 +18,83 @@ from utils.pdf_generator import generate_cv_pdf, generate_cover_letter_pdf
 
 load_dotenv()
 
-st.set_page_config(page_title="Matchpoint", page_icon="🎯", layout="wide")
+st.set_page_config(page_title="Matchpoint", page_icon="◆", layout="wide")
+
+# --- design system: "Dossier stratégique" — ink/ivory, serif headings, flat document look ---
+CUSTOM_CSS = """
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@600;700&family=Inter:wght@400;500;600&display=swap');
+
+:root {
+    --ink: #1A2332;
+    --ivory: #F7F5F0;
+    --slate: #5A6472;
+    --accent: #C4402A;
+    --hairline: #D8D3C8;
+}
+
+html, body, [class*="css"] { font-family: 'Inter', -apple-system, sans-serif; }
+.stApp { background-color: var(--ivory); }
+
+h1, h2, h3 {
+    font-family: 'Source Serif 4', Georgia, serif !important;
+    font-weight: 700 !important;
+    color: var(--ink) !important;
+    letter-spacing: -0.01em;
+}
+h1 { border-bottom: 2px solid var(--ink); padding-bottom: 0.5rem; margin-bottom: 1.2rem; }
+
+p, li, span, label { color: var(--ink); }
+.stCaption, [data-testid="stCaptionContainer"] { color: var(--slate) !important; }
+
+/* buttons: flat, square corners, no gimmicks */
+.stButton>button {
+    background-color: var(--ivory);
+    color: var(--ink);
+    border: 1.5px solid var(--ink);
+    border-radius: 2px;
+    font-weight: 500;
+    padding: 0.5rem 1.2rem;
+}
+.stButton>button:hover { background-color: var(--ink); color: var(--ivory); border-color: var(--ink); }
+.stButton>button[kind="primary"] { background-color: var(--accent); color: white; border: 1.5px solid var(--accent); }
+.stButton>button[kind="primary"]:hover { background-color: var(--ink); border-color: var(--ink); }
+
+/* bordered containers: thin top rule instead of card+shadow */
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    border: none !important;
+    border-top: 1px solid var(--hairline) !important;
+    border-radius: 0 !important;
+    padding-top: 1rem !important;
+    box-shadow: none !important;
+    background: transparent !important;
+}
+
+div[data-testid="stExpander"] {
+    border: 1px solid var(--hairline) !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    background: var(--ivory) !important;
+}
+
+div[data-testid="stProgress"] > div > div > div { background-color: var(--accent) !important; }
+
+div[data-testid="stMetric"] { background: transparent; border-top: 2px solid var(--ink); padding-top: 0.5rem; }
+div[data-testid="stMetricLabel"] { color: var(--slate) !important; }
+div[data-testid="stMetricValue"] { font-family: 'Source Serif 4', Georgia, serif !important; color: var(--ink) !important; }
+
+.stTextArea textarea, .stTextInput input {
+    border: 1px solid var(--hairline) !important;
+    border-radius: 2px !important;
+    background: white !important;
+}
+
+div[data-testid="stDataFrame"] { border: 1px solid var(--hairline) !important; }
+
+.block-container { padding-top: 2.5rem; max-width: 920px; }
+</style>
+"""
+st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 # --- session state init ---
 if "step" not in st.session_state:
@@ -68,7 +144,7 @@ if "tailored_application" not in st.session_state:
 if "application_log" not in st.session_state:
     st.session_state.application_log = []
 
-st.title("🎯 Matchpoint")
+st.title("Matchpoint")
 st.caption("Your AI job-matching and application agent")
 
 # --- step indicator ---
@@ -77,9 +153,9 @@ cols = st.columns(len(steps))
 for i, (col, label) in enumerate(zip(cols, steps), start=1):
     with col:
         if i == st.session_state.step:
-            st.markdown(f"**➡️ {label}**")
+            st.markdown(f"**{label}**")
         elif i < st.session_state.step:
-            st.markdown(f"✅ {label}")
+            st.markdown(f"{label} · done")
         else:
             st.markdown(f"{label}")
 
@@ -297,7 +373,7 @@ elif st.session_state.step == 3:
             st.success("Here's your strengths report")
             st.write(report.get("narrative", ""))
 
-            st.subheader("✅ Confirmed strengths")
+            st.subheader("Confirmed strengths")
             for s in report.get("confirmed_strengths", []):
                 st.write(f"- {s}")
 
@@ -423,7 +499,7 @@ elif st.session_state.step == 4:
                             col_i1, col_i2 = st.columns([1, 1])
                             with col_i1:
                                 if st.button(
-                                    "👍 Interested" if status["interested"] is not True else "👍 Interested ✓",
+                                    "Interested" if status["interested"] is not True else "Interested ✓",
                                     key=f"int_yes_{job_key}",
                                     type="primary" if status["interested"] is True else "secondary",
                                 ):
@@ -431,7 +507,7 @@ elif st.session_state.step == 4:
                                     st.rerun()
                             with col_i2:
                                 if st.button(
-                                    "👎 Not for me" if status["interested"] is not False else "👎 Not for me ✓",
+                                    "Not a fit" if status["interested"] is not False else "Not a fit ✓",
                                     key=f"int_no_{job_key}",
                                     type="primary" if status["interested"] is False else "secondary",
                                 ):
@@ -441,11 +517,11 @@ elif st.session_state.step == 4:
             selected_count = sum(1 for j in all_jobs if st.session_state.job_status.get(_job_key(j), {}).get("interested") is True)
             st.divider()
             if selected_count > 0:
-                if st.button(f"Next → Review my {selected_count} selected job(s)", type="primary"):
+                if st.button(f"Continue with {selected_count} selected job(s)", type="primary"):
                     st.session_state.step4_phase = "selected"
                     st.rerun()
             else:
-                st.info("Mark at least one job as 👍 Interested to continue.")
+                st.info("Mark at least one job as Interested to continue.")
 
         # === PHASE 2: only selected jobs, generate CV & cover letter here ===
         else:
@@ -484,7 +560,7 @@ elif st.session_state.step == 4:
                     else:
                         entry = st.session_state.tailored_applications[job_key]
                         tailored = entry["tailored"]
-                        st.success("✅ Application generated")
+                        st.success("Application generated")
                         if "error" in tailored:
                             st.error("Couldn't generate the tailored application automatically.")
                             st.code(tailored.get("raw_response", ""))
@@ -519,7 +595,7 @@ elif st.session_state.step == 4:
                                     status["applied"] = True
                                     st.rerun()
                             else:
-                                st.info("📨 Marked as applied")
+                                st.info("Marked as applied")
 
             st.divider()
             if st.button("Go to Dashboard →", type="primary"):
@@ -534,7 +610,7 @@ elif st.session_state.step == 4:
 # STEP 5 — DASHBOARD
 # ============================================================
 elif st.session_state.step == 5:
-    st.header("🎯 Your Dashboard")
+    st.header("Your Dashboard")
 
     applications = st.session_state.tailored_applications
     all_jobs = st.session_state.job_listings or []
@@ -570,15 +646,15 @@ elif st.session_state.step == 5:
             key = _job_key(job)
             s = st.session_state.job_status.get(key, {})
             interested = s.get("interested")
-            interested_label = "👍 Yes" if interested is True else ("👎 No" if interested is False else "— Not reviewed")
+            interested_label = "Yes" if interested is True else ("No" if interested is False else "Not reviewed")
             return {
                 "Title": job.get("title"),
                 "Company": job.get("company"),
                 "Category": job.get("category"),
                 "Match": f"{job.get('match_score', 0)}%",
                 "Interested": interested_label,
-                "CV generated": "✅" if s.get("cv_generated") else "—",
-                "Applied": "📨 Sent" if s.get("applied") else "—",
+                "CV generated": "Yes" if s.get("cv_generated") else "—",
+                "Applied": "Sent" if s.get("applied") else "—",
             }
 
         tracker_df = pd.DataFrame([_status_icon(j) for j in all_jobs])
@@ -595,7 +671,7 @@ elif st.session_state.step == 5:
             job = entry["job"]
             tailored = entry["tailored"]
             applied = st.session_state.job_status.get(job_key, {}).get("applied", False)
-            label = f"{'📨 ' if applied else ''}{job.get('title')} — {job.get('company')}"
+            label = f"{job.get('title')} — {job.get('company')}{' (applied)' if applied else ''}"
             with st.expander(label):
                 if "error" in tailored:
                     st.error("Couldn't generate the tailored application automatically.")
