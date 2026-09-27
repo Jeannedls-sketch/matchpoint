@@ -17,7 +17,7 @@ from utils.claude_client import (
 )
 from utils.pdf_generator import generate_cv_pdf, generate_cover_letter_pdf
 from utils.job_search import search_multiple_roles, COUNTRY_CODES
-from utils.career_data import find_real_offers, find_career_paths, offers_summary_stats
+from utils.career_data import offers_summary_stats, load_strengths_statements
 
 load_dotenv()
 
@@ -119,6 +119,8 @@ if "step" not in st.session_state:
     st.session_state.step = 1
 if "started" not in st.session_state:
     st.session_state.started = False
+if "max_step_reached" not in st.session_state:
+    st.session_state.max_step_reached = 1
 if "profile" not in st.session_state:
     st.session_state.profile = None
 if "backup_questions" not in st.session_state:
@@ -201,15 +203,22 @@ STEP_PILL_CSS = """
 st.markdown(STEP_PILL_CSS, unsafe_allow_html=True)
 
 steps = ["Onboarding", "Your Story", "Strengths", "Values & Matches", "Dashboard"]
-pills = []
-for i, label in enumerate(steps, start=1):
-    if i == st.session_state.step:
-        pills.append(f'<span class="mp-pill mp-pill-current">{i}. {label}</span>')
-    elif i < st.session_state.step:
-        pills.append(f'<span class="mp-pill mp-pill-done">{i}. {label}</span>')
-    else:
-        pills.append(f'<span class="mp-pill mp-pill-todo">{i}. {label}</span>')
-st.markdown(" ".join(pills), unsafe_allow_html=True)
+st.session_state.max_step_reached = max(st.session_state.max_step_reached, st.session_state.step)
+
+nav_cols = st.columns(len(steps))
+for i, (col, label) in enumerate(zip(nav_cols, steps), start=1):
+    with col:
+        reachable = i <= st.session_state.max_step_reached
+        btn_label = f"{i}. {label}" + (" ✓" if i < st.session_state.step else "")
+        if st.button(
+            btn_label,
+            key=f"nav_{i}",
+            disabled=not reachable,
+            type="primary" if i == st.session_state.step else "secondary",
+            use_container_width=True,
+        ):
+            st.session_state.step = i
+            st.rerun()
 
 st.divider()
 
@@ -413,17 +422,26 @@ elif st.session_state.step == 2:
 # ============================================================
 elif st.session_state.step == 3:
     st.header("Step 3: Rate your strengths")
+    st.caption("Based on the LBS Career Centre's own 40-statement strengths framework — not AI-generated.")
 
-    default_strengths = ["Problem-solving", "Communication", "Leadership", "Adaptability", "Attention to detail"]
-    strengths_list = st.session_state.story_analysis.get("suggested_strengths") or default_strengths
+    statements = load_strengths_statements()
 
     if st.session_state.strengths_report is None:
-        st.write("Rate yourself honestly on each, from 1 (not a strength) to 5 (clear strength).")
+        st.write("Score each statement 0 (not me) to 6 (very much me) — go with your gut feel.")
 
-        for s in strengths_list:
-            st.session_state.strengths_ratings[s] = st.slider(
-                s, 1, 5, st.session_state.strengths_ratings.get(s, 3), key=f"rate_{s}"
-            )
+        by_category = {}
+        for s in statements:
+            by_category.setdefault(s["category"], []).append(s["statement"])
+
+        for cat, stmts in by_category.items():
+            with st.expander(cat, expanded=False):
+                for stmt in stmts:
+                    st.session_state.strengths_ratings[stmt] = st.slider(
+                        stmt, 0, 6, st.session_state.strengths_ratings.get(stmt, 3), key=f"rate_{stmt}"
+                    )
+
+        rated_count = len(st.session_state.strengths_ratings)
+        st.caption(f"{rated_count} / {len(statements)} statements have a score set.")
 
         if st.button("Generate my report →", type="primary"):
             with st.spinner("Building your strengths report..."):
@@ -511,28 +529,6 @@ elif st.session_state.step == 4:
             st.write(suggestions.get("reasoning", ""))
             st.write("**Industries:** " + ", ".join(suggestions.get("suggested_industries", [])))
             st.write("**Roles:** " + ", ".join(suggestions.get("suggested_roles", [])))
-
-            # --- ground the suggestions in real LBS Career Centre outcomes data ---
-            grounding_keywords = suggestions.get("suggested_industries", []) + suggestions.get("suggested_roles", [])
-            real_offers = find_real_offers(grounding_keywords, limit=6)
-            real_paths = find_career_paths(suggestions.get("suggested_industries", []), limit=3)
-            stats = offers_summary_stats(grounding_keywords)
-
-            if stats.get("count"):
-                st.info(
-                    f"Grounded in real outcomes: **{stats['count']} real LBS graduates (2023-2025)** "
-                    f"went into similar roles — most often at "
-                    f"{', '.join(stats.get('top_employers', [])[:3])}."
-                )
-                with st.expander("See real graduate placements & typical career paths"):
-                    if real_offers:
-                        st.write("**Real placements matching this profile:**")
-                        for o in real_offers:
-                            st.write(f"- {o.get('job_title') or 'Role'} at **{o.get('employer','')}**, {o.get('city','')} ({o.get('grad_year','')})")
-                    if real_paths:
-                        st.write("**Typical career path from here:**")
-                        for p in real_paths:
-                            st.write(f"- **{p.get('entry_role','')}** → {p.get('next_steps','')}")
 
             col_x, col_y = st.columns(2)
             with col_x:
