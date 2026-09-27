@@ -14,8 +14,10 @@ from utils.claude_client import (
     score_and_categorize_jobs,
     tailor_application,
     suggest_cv_keywords,
+    tailor_cv_edits,
 )
 from utils.pdf_generator import generate_cv_pdf, generate_cover_letter_pdf
+from utils.docx_editor import edit_cv_docx
 from utils.job_search import search_multiple_roles, COUNTRY_CODES
 from utils.career_data import offers_summary_stats, load_strengths_statements
 
@@ -121,6 +123,12 @@ if "started" not in st.session_state:
     st.session_state.started = False
 if "max_step_reached" not in st.session_state:
     st.session_state.max_step_reached = 1
+if "cv_docx_bytes" not in st.session_state:
+    st.session_state.cv_docx_bytes = None
+if "cv_docx_name" not in st.session_state:
+    st.session_state.cv_docx_name = None
+if "cv_raw_text" not in st.session_state:
+    st.session_state.cv_raw_text = ""
 if "profile" not in st.session_state:
     st.session_state.profile = None
 if "backup_questions" not in st.session_state:
@@ -247,6 +255,15 @@ if st.session_state.step == 1:
 
     if st.button("Build my profile →", type="primary", disabled=(cv_file is None)):
         with st.spinner("Reading your documents..."):
+            # keep the original CV file bytes if it's a .docx — lets us edit
+            # the real file in place later instead of generating a fresh one
+            if cv_file is not None and cv_file.name.lower().endswith(".docx"):
+                st.session_state.cv_docx_bytes = cv_file.read()
+                st.session_state.cv_docx_name = cv_file.name
+                cv_file.seek(0)
+            else:
+                st.session_state.cv_docx_bytes = None
+
             uploaded = {
                 "cv": cv_file,
                 "transcripts": transcripts_file,
@@ -254,6 +271,7 @@ if st.session_state.step == 1:
                 "certifications": certifications_file,
             }
             documents = extract_all(uploaded)
+            st.session_state.cv_raw_text = documents.get("cv", "")
 
             writing_sample = ""
             if cover_letter_file is not None:
@@ -422,12 +440,12 @@ elif st.session_state.step == 2:
 # ============================================================
 elif st.session_state.step == 3:
     st.header("Step 3: Rate your strengths")
-    st.caption("Based on the LBS Career Centre's own 40-statement strengths framework — not AI-generated.")
+    st.caption("Based on the LBS Career Centre's own 40-statement strengths framework, not AI-generated.")
 
     statements = load_strengths_statements()
 
     if st.session_state.strengths_report is None:
-        st.write("Score each statement 0 (not me) to 6 (very much me) — go with your gut feel.")
+        st.write("Score each statement 0 (not me) to 6 (very much me), go with your gut feel.")
 
         by_category = {}
         for s in statements:
@@ -468,7 +486,7 @@ elif st.session_state.step == 3:
 
             growth_areas = report.get("growth_areas", [])
             if growth_areas:
-                st.subheader("🌱 Growth areas")
+                st.subheader("Growth areas")
                 st.write("Pick the ones that matter most to you right now:")
                 labels = [g["area"] for g in growth_areas]
                 notes_by_label = {g["area"]: g.get("note", "") for g in growth_areas}
@@ -705,15 +723,42 @@ elif st.session_state.step == 4:
                     if not already_generated:
                         if st.button("Generate CV & Cover Letter →", key=f"gen_{job_key}"):
                             with st.spinner("Tailoring your CV and cover letter..."):
-                                tailored = tailor_application(
-                                    job, st.session_state.profile, st.session_state.story_analysis
-                                )
-                                entry = {"job": job, "tailored": tailored}
-                                if "error" not in tailored:
-                                    entry["cv_pdf"] = generate_cv_pdf(st.session_state.profile, tailored, job)
-                                    entry["cl_pdf"] = generate_cover_letter_pdf(
-                                        tailored.get("cover_letter", ""), st.session_state.profile, job
+                                entry = {"job": job}
+                                has_real_docx = st.session_state.cv_docx_bytes and st.session_state.cv_raw_text
+
+                                if has_real_docx:
+                                    # edit the candidate's REAL uploaded CV file in place
+                                    cv_edits = tailor_cv_edits(
+                                        st.session_state.cv_raw_text, job, st.session_state.profile
                                     )
+                                    entry["tailored"] = {
+                                        "cv_highlights": [e.get("replace", "") for e in cv_edits.get("edits", [])],
+                                        "cover_letter": cv_edits.get("cover_letter", ""),
+                                    }
+                                    if "error" not in cv_edits:
+                                        edited_bytes, applied_count = edit_cv_docx(
+                                            st.session_state.cv_docx_bytes, cv_edits.get("edits", [])
+                                        )
+                                        entry["cv_docx"] = edited_bytes
+                                        entry["cv_edits_applied"] = applied_count
+                                        entry["cl_pdf"] = generate_cover_letter_pdf(
+                                            cv_edits.get("cover_letter", ""), st.session_state.profile, job
+                                        )
+                                    else:
+                                        entry["tailored"] = cv_edits
+                                else:
+                                    # fall back: generate a fresh CV from the structured profile
+                                    tailored = tailor_application(
+                                        job, st.session_state.profile, st.session_state.story_analysis
+                                    )
+                                    entry["tailored"] = tailored
+                                    if "error" not in tailored:
+                                        entry["cv_pdf"] = generate_cv_pdf(st.session_state.profile, tailored, job)
+                                        entry["cl_pdf"] = generate_cover_letter_pdf(
+                                            tailored.get("cover_letter", ""), st.session_state.profile, job
+                                        )
+
+                                if "error" not in entry["tailored"]:
                                     entry["keywords"] = suggest_cv_keywords(job, st.session_state.profile)
                                 st.session_state.tailored_applications[job_key] = entry
                                 status["cv_generated"] = True
@@ -726,12 +771,21 @@ elif st.session_state.step == 4:
                             st.error("Couldn't generate the tailored application automatically.")
                             st.code(tailored.get("raw_response", ""))
                         else:
+                            if "cv_docx" in entry:
+                                st.caption(f"Edited your real CV in place ({entry.get('cv_edits_applied', 0)} bullet(s) reworded).")
                             col_a, col_b = st.columns(2)
                             with col_a:
                                 st.write("**CV highlights**")
                                 for h in tailored.get("cv_highlights", []):
                                     st.write(f"- {h}")
-                                if "cv_pdf" in entry:
+                                if "cv_docx" in entry:
+                                    st.download_button(
+                                        "⬇ Download your edited CV (DOCX)", data=entry["cv_docx"],
+                                        file_name=f"CV_{job.get('company')}.docx",
+                                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                        key=f"dl_cv_{job_key}",
+                                    )
+                                elif "cv_pdf" in entry:
                                     st.download_button(
                                         "⬇ Download CV (PDF)", data=entry["cv_pdf"],
                                         file_name=f"CV_{job.get('company')}.pdf", mime="application/pdf",
@@ -856,7 +910,14 @@ elif st.session_state.step == 5:
                         st.write("**CV highlights**")
                         for h in tailored.get("cv_highlights", []):
                             st.write(f"- {h}")
-                        if "cv_pdf" in entry:
+                        if "cv_docx" in entry:
+                            st.download_button(
+                                "⬇ Download your edited CV (DOCX)", data=entry["cv_docx"],
+                                file_name=f"CV_{job.get('company')}.docx",
+                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                                key=f"dash_dl_cv_{job_key}",
+                            )
+                        elif "cv_pdf" in entry:
                             st.download_button(
                                 "⬇ Download CV (PDF)", data=entry["cv_pdf"],
                                 file_name=f"CV_{job.get('company')}.pdf", mime="application/pdf",
