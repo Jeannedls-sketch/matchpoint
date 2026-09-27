@@ -11,87 +11,103 @@ from utils.claude_client import (
     generate_strengths_report,
     suggest_industries_and_roles,
     adjust_suggestions,
-    generate_mock_job_listings,
+    score_and_categorize_jobs,
     tailor_application,
 )
 from utils.pdf_generator import generate_cv_pdf, generate_cover_letter_pdf
+from utils.job_search import search_multiple_roles, COUNTRY_CODES
 
 load_dotenv()
 
 st.set_page_config(page_title="Matchpoint", page_icon="◆", layout="wide")
 
-# --- design system: "Dossier stratégique" — ink/ivory, serif headings, flat document look ---
+# --- design system: modern tech/startup — near-black on off-white, one bold indigo accent, all sans-serif ---
 CUSTOM_CSS = """
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@600;700&family=Inter:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 
 :root {
-    --ink: #1A2332;
-    --ivory: #F7F5F0;
-    --slate: #5A6472;
-    --accent: #C4402A;
-    --hairline: #D8D3C8;
+    --ink: #0F1115;
+    --bg: #FAFAF9;
+    --panel: #FFFFFF;
+    --muted: #6B7280;
+    --accent: #4F46E5;
+    --accent-hover: #4338CA;
+    --border: #E5E5E3;
 }
 
 html, body, [class*="css"] { font-family: 'Inter', -apple-system, sans-serif; }
-.stApp { background-color: var(--ivory); }
+.stApp { background-color: var(--bg); }
 
 h1, h2, h3 {
-    font-family: 'Source Serif 4', Georgia, serif !important;
-    font-weight: 700 !important;
+    font-family: 'Inter', sans-serif !important;
+    font-weight: 800 !important;
     color: var(--ink) !important;
-    letter-spacing: -0.01em;
+    letter-spacing: -0.02em;
 }
-h1 { border-bottom: 2px solid var(--ink); padding-bottom: 0.5rem; margin-bottom: 1.2rem; }
+h1 { font-size: 2rem !important; margin-bottom: 0.3rem; }
+h2 { font-size: 1.4rem !important; }
+h3 { font-size: 1.1rem !important; }
 
 p, li, span, label { color: var(--ink); }
-.stCaption, [data-testid="stCaptionContainer"] { color: var(--slate) !important; }
+.stCaption, [data-testid="stCaptionContainer"] { color: var(--muted) !important; font-size: 0.85rem; }
 
-/* buttons: flat, square corners, no gimmicks */
+/* buttons: confident, slightly rounded, no border unless secondary */
 .stButton>button {
-    background-color: var(--ivory);
+    background-color: var(--panel);
     color: var(--ink);
-    border: 1.5px solid var(--ink);
-    border-radius: 2px;
-    font-weight: 500;
-    padding: 0.5rem 1.2rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-weight: 600;
+    padding: 0.55rem 1.3rem;
+    transition: all 0.12s ease;
 }
-.stButton>button:hover { background-color: var(--ink); color: var(--ivory); border-color: var(--ink); }
-.stButton>button[kind="primary"] { background-color: var(--accent); color: white; border: 1.5px solid var(--accent); }
-.stButton>button[kind="primary"]:hover { background-color: var(--ink); border-color: var(--ink); }
+.stButton>button:hover { border-color: var(--ink); }
+.stButton>button[kind="primary"] {
+    background-color: var(--accent);
+    color: white;
+    border: none;
+    box-shadow: 0 1px 2px rgba(79,70,229,0.25);
+}
+.stButton>button[kind="primary"]:hover { background-color: var(--accent-hover); }
 
-/* bordered containers: thin top rule instead of card+shadow */
+/* bordered containers: subtle card, minimal shadow */
 div[data-testid="stVerticalBlockBorderWrapper"] {
-    border: none !important;
-    border-top: 1px solid var(--hairline) !important;
-    border-radius: 0 !important;
-    padding-top: 1rem !important;
-    box-shadow: none !important;
-    background: transparent !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 10px !important;
+    padding: 1.1rem !important;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.03) !important;
+    background: var(--panel) !important;
 }
 
 div[data-testid="stExpander"] {
-    border: 1px solid var(--hairline) !important;
-    border-radius: 0 !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 10px !important;
     box-shadow: none !important;
-    background: var(--ivory) !important;
+    background: var(--panel) !important;
 }
 
 div[data-testid="stProgress"] > div > div > div { background-color: var(--accent) !important; }
 
-div[data-testid="stMetric"] { background: transparent; border-top: 2px solid var(--ink); padding-top: 0.5rem; }
-div[data-testid="stMetricLabel"] { color: var(--slate) !important; }
-div[data-testid="stMetricValue"] { font-family: 'Source Serif 4', Georgia, serif !important; color: var(--ink) !important; }
+div[data-testid="stMetric"] {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.9rem 1rem;
+}
+div[data-testid="stMetricLabel"] { color: var(--muted) !important; font-size: 0.8rem; }
+div[data-testid="stMetricValue"] { font-family: 'Inter', sans-serif !important; font-weight: 800 !important; color: var(--ink) !important; }
 
 .stTextArea textarea, .stTextInput input {
-    border: 1px solid var(--hairline) !important;
-    border-radius: 2px !important;
-    background: white !important;
+    border: 1px solid var(--border) !important;
+    border-radius: 8px !important;
+    background: var(--panel) !important;
 }
+.stTextArea textarea:focus, .stTextInput input:focus { border-color: var(--accent) !important; }
 
-div[data-testid="stDataFrame"] { border: 1px solid var(--hairline) !important; }
+div[data-testid="stDataFrame"] { border: 1px solid var(--border) !important; border-radius: 10px !important; }
 
-.block-container { padding-top: 2.5rem; max-width: 920px; }
+.block-container { padding-top: 2.5rem; max-width: 900px; }
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
@@ -147,17 +163,31 @@ if "application_log" not in st.session_state:
 st.title("Matchpoint")
 st.caption("Your AI job-matching and application agent")
 
-# --- step indicator ---
-steps = ["1. Onboarding", "2. Your Story", "3. Strengths", "4. Values & Matches", "Dashboard"]
-cols = st.columns(len(steps))
-for i, (col, label) in enumerate(zip(cols, steps), start=1):
-    with col:
-        if i == st.session_state.step:
-            st.markdown(f"**{label}**")
-        elif i < st.session_state.step:
-            st.markdown(f"{label} · done")
-        else:
-            st.markdown(f"{label}")
+st.title("Matchpoint")
+st.caption("Your AI job-matching and application agent")
+
+# --- step indicator: pill-style, colored for current/done ---
+STEP_PILL_CSS = """
+<style>
+.mp-pill { display: inline-block; padding: 0.3rem 0.8rem; border-radius: 999px;
+    font-size: 0.8rem; font-weight: 600; margin-right: 0.4rem; }
+.mp-pill-current { background: var(--accent); color: white; }
+.mp-pill-done { background: #EEF2FF; color: var(--accent); }
+.mp-pill-todo { background: transparent; color: var(--muted); border: 1px solid var(--border); }
+</style>
+"""
+st.markdown(STEP_PILL_CSS, unsafe_allow_html=True)
+
+steps = ["Onboarding", "Your Story", "Strengths", "Values & Matches", "Dashboard"]
+pills = []
+for i, label in enumerate(steps, start=1):
+    if i == st.session_state.step:
+        pills.append(f'<span class="mp-pill mp-pill-current">{i}. {label}</span>')
+    elif i < st.session_state.step:
+        pills.append(f'<span class="mp-pill mp-pill-done">{i}. {label}</span>')
+    else:
+        pills.append(f'<span class="mp-pill mp-pill-todo">{i}. {label}</span>')
+st.markdown(" ".join(pills), unsafe_allow_html=True)
 
 st.divider()
 
@@ -165,14 +195,14 @@ st.divider()
 # STEP 1 — ONBOARDING
 # ============================================================
 if st.session_state.step == 1:
-    st.header("Step 1 — Tell us about yourself")
+    st.header("Step 1: Tell us about yourself")
     st.write("Upload your documents so Matchpoint can build your profile.")
 
     col1, col2 = st.columns(2)
     with col1:
         cv_file = st.file_uploader("CV / Resume (required)", type=["pdf", "docx"])
         cover_letter_file = st.file_uploader(
-            "Old cover letter (optional — used to capture your writing tone)",
+            "Old cover letter (optional, used to capture your writing tone)",
             type=["pdf", "docx"],
         )
     with col2:
@@ -218,7 +248,7 @@ if st.session_state.step == 1:
         st.subheader("Here's what we found")
 
         with st.expander("Extracted profile", expanded=True):
-            st.write(f"**Name:** {profile.get('name', '—')}")
+            st.write(f"**Name:** {profile.get('name', 'Not specified')}")
 
             st.write("**Education:**")
             for edu in profile.get("education", []):
@@ -230,9 +260,9 @@ if st.session_state.step == 1:
                 for h in exp.get("highlights", []):
                     st.write(f"  - {h}")
 
-            st.write("**Skills:**", ", ".join(profile.get("skills", [])) or "—")
-            st.write("**Certifications:**", ", ".join(profile.get("certifications", [])) or "—")
-            st.write("**Writing tone notes:**", profile.get("writing_tone_notes", "—"))
+            st.write("**Skills:**", ", ".join(profile.get("skills", [])) or "Not specified")
+            st.write("**Certifications:**", ", ".join(profile.get("certifications", [])) or "None listed")
+            st.write("**Writing tone notes:**", profile.get("writing_tone_notes", "Not enough data"))
 
         # --- 1.b: if interests unclear, ask directly ---
         if not profile.get("interests_clear", False):
@@ -258,10 +288,10 @@ if st.session_state.step == 1:
 # STEP 2 — YOUR STORY
 # ============================================================
 elif st.session_state.step == 2:
-    st.header("Step 2 — Tell us about a moment you were at your best")
+    st.header("Step 2: Tell us about a moment you were at your best")
     st.write(
-        "Think of a specific moment — at work, school, with friends, "
-        "anywhere — when you felt genuinely proud of how you showed up."
+        "Think of a specific moment, at work, school, with friends, "
+        "anywhere, when you felt genuinely proud of how you showed up."
     )
 
     if st.session_state.story_analysis is None:
@@ -288,7 +318,7 @@ elif st.session_state.step == 2:
 
         if st.session_state.backup_questions:
             st.divider()
-            st.subheader("Let's find one together — answer what resonates")
+            st.subheader("Let's find one together: answer what resonates")
             for i, q in enumerate(st.session_state.backup_questions):
                 st.session_state.backup_answers[i] = st.text_area(
                     q, value=st.session_state.backup_answers.get(i, ""), key=f"backup_{i}"
@@ -324,7 +354,7 @@ elif st.session_state.step == 2:
             st.code(analysis.get("raw_response", ""))
         else:
             st.success("Here's what your story shows")
-            st.write(f"**Summary:** {analysis.get('summary', '—')}")
+            st.write(f"**Summary:** {analysis.get('summary', 'Not available')}")
             st.write("**Traits it reveals:**")
             for t in analysis.get("traits", []):
                 st.write(f"- {t}")
@@ -341,13 +371,13 @@ elif st.session_state.step == 2:
 # STEP 3 — STRENGTHS
 # ============================================================
 elif st.session_state.step == 3:
-    st.header("Step 3 — Rate your strengths")
+    st.header("Step 3: Rate your strengths")
 
     default_strengths = ["Problem-solving", "Communication", "Leadership", "Adaptability", "Attention to detail"]
     strengths_list = st.session_state.story_analysis.get("suggested_strengths") or default_strengths
 
     if st.session_state.strengths_report is None:
-        st.write("Rate yourself honestly on each — 1 (not a strength) to 5 (clear strength).")
+        st.write("Rate yourself honestly on each, from 1 (not a strength) to 5 (clear strength).")
 
         for s in strengths_list:
             st.session_state.strengths_ratings[s] = st.slider(
@@ -388,7 +418,7 @@ elif st.session_state.step == 3:
                 for s in selected:
                     st.caption(f"**{s}:** {notes_by_label.get(s, '')}")
             else:
-                st.info("No major growth areas flagged from your ratings — strong across the board!")
+                st.info("No major growth areas flagged from your ratings. Strong across the board.")
 
             if st.button("Continue to Step 4 →", type="primary"):
                 st.session_state.step = 4
@@ -402,12 +432,12 @@ elif st.session_state.step == 3:
 # STEP 4 — VALUES & MATCHES
 # ============================================================
 elif st.session_state.step == 4:
-    st.header("Step 4 — Your values, and your matches")
+    st.header("Step 4: Your values, and your matches")
 
     VALUES_QUESTIONS = [
         "What matters most to you in your next role? (impact, learning, pay, flexibility, prestige...)",
         "What kind of work environment do you thrive in?",
-        "Any industries or company types you'd love — or want to avoid?",
+        "Any industries or company types you'd love, or want to avoid?",
         "Anything else about what you're looking for?",
     ]
 
@@ -429,7 +459,7 @@ elif st.session_state.step == 4:
                 )
             st.rerun()
 
-    # --- part B: show suggestions, allow override, then generate matches ---
+    # --- part B: show suggestions, allow override, then search REAL jobs via Adzuna ---
     elif st.session_state.job_listings is None:
         suggestions = st.session_state.suggestions
         if "error" in suggestions:
@@ -441,13 +471,26 @@ elif st.session_state.step == 4:
             st.write("**Industries:** " + ", ".join(suggestions.get("suggested_industries", [])))
             st.write("**Roles:** " + ", ".join(suggestions.get("suggested_roles", [])))
 
+            col_x, col_y = st.columns(2)
+            with col_x:
+                country_name = st.selectbox("Country to search in", list(COUNTRY_CODES.keys()))
+            with col_y:
+                city = st.text_input("City (optional)", placeholder="e.g. London, Paris")
+
             col_a, col_b = st.columns([1, 1])
             with col_a:
-                if st.button("This looks right → Find matching jobs", type="primary"):
-                    with st.spinner("Searching for matching roles..."):
-                        st.session_state.job_listings = generate_mock_job_listings(
-                            suggestions, st.session_state.profile
-                        )
+                if st.button("This looks right → Find real matching jobs", type="primary"):
+                    with st.spinner("Searching real job listings..."):
+                        country_code = COUNTRY_CODES[country_name]
+                        roles = suggestions.get("suggested_roles", []) or ["business analyst"]
+                        real_jobs = search_multiple_roles(roles, country_code, where=city)
+                        if not real_jobs:
+                            st.session_state.job_listings = []
+                            st.warning("No real listings found for these roles/location. Try a broader city or fewer filters.")
+                        else:
+                            st.session_state.job_listings = score_and_categorize_jobs(
+                                real_jobs, st.session_state.profile, suggestions
+                            )
                     st.rerun()
             with col_b:
                 if st.button("I don't agree with this"):
@@ -456,7 +499,7 @@ elif st.session_state.step == 4:
             if st.session_state.override_mode:
                 st.divider()
                 override_text = st.text_area(
-                    "Tell us what you actually want instead — we'll tailor the next steps for you.",
+                    "Tell us what you actually want instead, and we'll tailor the next steps for you.",
                     placeholder="e.g. I really want to do consulting, please focus there instead.",
                 )
                 if st.button("Update my suggestions →", type="primary", disabled=not override_text.strip()):
@@ -471,10 +514,16 @@ elif st.session_state.step == 4:
     else:
         all_jobs = st.session_state.job_listings
 
+        if not all_jobs:
+            st.warning("No real listings found for that search.")
+            if st.button("← Try a different search"):
+                st.session_state.job_listings = None
+                st.rerun()
+
         # === PHASE 1: browse all jobs, mark interest only ===
-        if st.session_state.step4_phase == "review":
+        elif st.session_state.step4_phase == "review":
             st.subheader("Your matches")
-            st.caption(f"{len(all_jobs)} jobs found — mark what interests you, then move to the next step.")
+            st.caption(f"{len(all_jobs)} jobs found. Mark what interests you, then move to the next step.")
 
             by_category = {}
             for job in all_jobs:
@@ -491,8 +540,11 @@ elif st.session_state.step == 4:
                         job_key = _job_key(job)
                         status = _ensure_status(job_key)
                         with st.container(border=True):
-                            st.write(f"**{job.get('title')}** — {job.get('company')} · {job.get('location')}")
+                            st.write(f"**{job.get('title')}**")
+                            st.caption(f"{job.get('company')} · {job.get('location')}")
                             st.write(job.get("description", ""))
+                            if job.get("apply_link") and job["apply_link"] != "#":
+                                st.markdown(f"[View original listing]({job['apply_link']})")
                             st.progress(job.get("match_score", 0) / 100, text=f"Match: {job.get('match_score', 0)}%")
                             st.caption(job.get("match_reason", ""))
 
@@ -536,8 +588,11 @@ elif st.session_state.step == 4:
                 job_key = _job_key(job)
                 status = _ensure_status(job_key)
                 with st.container(border=True):
-                    st.write(f"**{job.get('title')}** — {job.get('company')} · {job.get('location')} · {job.get('category')}")
+                    st.write(f"**{job.get('title')}**")
+                    st.caption(f"{job.get('company')} · {job.get('location')} · {job.get('category')}")
                     st.write(job.get("description", ""))
+                    if job.get("apply_link") and job["apply_link"] != "#":
+                        st.markdown(f"[View original listing]({job['apply_link']})")
                     st.progress(job.get("match_score", 0) / 100, text=f"Match: {job.get('match_score', 0)}%")
 
                     already_generated = job_key in st.session_state.tailored_applications
@@ -653,8 +708,8 @@ elif st.session_state.step == 5:
                 "Category": job.get("category"),
                 "Match": f"{job.get('match_score', 0)}%",
                 "Interested": interested_label,
-                "CV generated": "Yes" if s.get("cv_generated") else "—",
-                "Applied": "Sent" if s.get("applied") else "—",
+                "CV generated": "Yes" if s.get("cv_generated") else "Not yet",
+                "Applied": "Sent" if s.get("applied") else "Not yet",
             }
 
         tracker_df = pd.DataFrame([_status_icon(j) for j in all_jobs])
@@ -671,8 +726,10 @@ elif st.session_state.step == 5:
             job = entry["job"]
             tailored = entry["tailored"]
             applied = st.session_state.job_status.get(job_key, {}).get("applied", False)
-            label = f"{job.get('title')} — {job.get('company')}{' (applied)' if applied else ''}"
+            label = f"{job.get('title')}, {job.get('company')}{' (applied)' if applied else ''}"
             with st.expander(label):
+                if job.get("apply_link") and job["apply_link"] != "#":
+                    st.markdown(f"[View original listing]({job['apply_link']})")
                 if "error" in tailored:
                     st.error("Couldn't generate the tailored application automatically.")
                     st.code(tailored.get("raw_response", ""))
