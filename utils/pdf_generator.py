@@ -27,34 +27,69 @@ def _clean(text: str) -> str:
 
 
 def generate_cv_pdf(profile: dict, tailored: dict, job: dict) -> bytes:
-    """Builds a short tailored-CV-highlights PDF for one job. Returns PDF bytes."""
+    """Builds a full, real CV (not just a highlights excerpt) tailored for one job.
+    Includes name, a tailored highlights section, full experience, education,
+    skills and certifications — everything drawn from the real profile,
+    nothing invented. Returns PDF bytes."""
     buf = BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=letter, topMargin=0.8 * inch, bottomMargin=0.8 * inch)
+    doc = SimpleDocTemplate(buf, pagesize=letter, topMargin=0.7 * inch, bottomMargin=0.7 * inch)
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle("TitleC", parent=styles["Title"], textColor=colors.HexColor("#4338ca"))
+    title_style = ParagraphStyle("TitleC", parent=styles["Title"], textColor=colors.HexColor("#4338ca"), spaceAfter=2)
     subtitle_style = ParagraphStyle("SubtitleC", parent=styles["Normal"], textColor=colors.grey, spaceAfter=14)
-    section_style = ParagraphStyle("SectionC", parent=styles["Heading2"], spaceBefore=14, spaceAfter=6)
+    section_style = ParagraphStyle("SectionC", parent=styles["Heading2"], spaceBefore=14, spaceAfter=6,
+                                    textColor=colors.HexColor("#1A2332"))
+    role_style = ParagraphStyle("RoleC", parent=styles["Normal"], fontName="Helvetica-Bold", spaceBefore=8)
+    meta_style = ParagraphStyle("MetaC", parent=styles["Normal"], textColor=colors.grey, fontSize=9, spaceAfter=4)
 
     story = []
     story.append(Paragraph(_clean(profile.get("name", "Candidate")), title_style))
     story.append(Paragraph(
-        f"Tailored for: {_clean(job.get('title', ''))} at {_clean(job.get('company', ''))}",
+        f"Application for: {_clean(job.get('title', ''))} at {_clean(job.get('company', ''))}",
         subtitle_style,
     ))
 
-    story.append(Paragraph("Highlights for this role", section_style))
+    # --- tailored highlights: the pitch specific to this job ---
     highlights = tailored.get("cv_highlights", [])
     if highlights:
+        story.append(Paragraph("Profile Highlights for This Role", section_style))
         items = [ListItem(Paragraph(_clean(h), styles["Normal"])) for h in highlights]
         story.append(ListFlowable(items, bulletType="bullet"))
 
-    story.append(Paragraph("Education", section_style))
-    for edu in profile.get("education", []):
-        line = f"{_clean(edu.get('degree', ''))}, {_clean(edu.get('institution', ''))} ({_clean(edu.get('dates', ''))})"
-        story.append(Paragraph(line, styles["Normal"]))
+    # --- full real work experience, not just the highlights excerpt ---
+    experience = profile.get("experience", [])
+    if experience:
+        story.append(Paragraph("Experience", section_style))
+        for exp in experience:
+            role_line = f"{_clean(exp.get('role', ''))}, {_clean(exp.get('company', ''))}"
+            story.append(Paragraph(role_line, role_style))
+            if exp.get("dates"):
+                story.append(Paragraph(_clean(exp.get("dates", "")), meta_style))
+            exp_highlights = exp.get("highlights", [])
+            if exp_highlights:
+                items = [ListItem(Paragraph(_clean(h), styles["Normal"])) for h in exp_highlights]
+                story.append(ListFlowable(items, bulletType="bullet"))
 
-    story.append(Paragraph("Skills", section_style))
-    story.append(Paragraph(_clean(", ".join(profile.get("skills", []))), styles["Normal"]))
+    # --- education ---
+    education = profile.get("education", [])
+    if education:
+        story.append(Paragraph("Education", section_style))
+        for edu in education:
+            line = f"{_clean(edu.get('degree', ''))}, {_clean(edu.get('institution', ''))}"
+            story.append(Paragraph(f"<b>{line}</b>", styles["Normal"]))
+            if edu.get("dates"):
+                story.append(Paragraph(_clean(edu.get("dates", "")), meta_style))
+
+    # --- skills ---
+    skills = profile.get("skills", [])
+    if skills:
+        story.append(Paragraph("Skills", section_style))
+        story.append(Paragraph(_clean(", ".join(skills)), styles["Normal"]))
+
+    # --- certifications ---
+    certs = profile.get("certifications", [])
+    if certs:
+        story.append(Paragraph("Certifications", section_style))
+        story.append(Paragraph(_clean(", ".join(certs)), styles["Normal"]))
 
     doc.build(story)
     buf.seek(0)
