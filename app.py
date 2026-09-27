@@ -17,6 +17,7 @@ from utils.claude_client import (
 )
 from utils.pdf_generator import generate_cv_pdf, generate_cover_letter_pdf
 from utils.job_search import search_multiple_roles, COUNTRY_CODES
+from utils.career_data import find_real_offers, find_career_paths, offers_summary_stats
 
 load_dotenv()
 
@@ -511,6 +512,28 @@ elif st.session_state.step == 4:
             st.write("**Industries:** " + ", ".join(suggestions.get("suggested_industries", [])))
             st.write("**Roles:** " + ", ".join(suggestions.get("suggested_roles", [])))
 
+            # --- ground the suggestions in real LBS Career Centre outcomes data ---
+            grounding_keywords = suggestions.get("suggested_industries", []) + suggestions.get("suggested_roles", [])
+            real_offers = find_real_offers(grounding_keywords, limit=6)
+            real_paths = find_career_paths(suggestions.get("suggested_industries", []), limit=3)
+            stats = offers_summary_stats(grounding_keywords)
+
+            if stats.get("count"):
+                st.info(
+                    f"Grounded in real outcomes: **{stats['count']} real LBS graduates (2023-2025)** "
+                    f"went into similar roles — most often at "
+                    f"{', '.join(stats.get('top_employers', [])[:3])}."
+                )
+                with st.expander("See real graduate placements & typical career paths"):
+                    if real_offers:
+                        st.write("**Real placements matching this profile:**")
+                        for o in real_offers:
+                            st.write(f"- {o.get('job_title') or 'Role'} at **{o.get('employer','')}**, {o.get('city','')} ({o.get('grad_year','')})")
+                    if real_paths:
+                        st.write("**Typical career path from here:**")
+                        for p in real_paths:
+                            st.write(f"- **{p.get('entry_role','')}** → {p.get('next_steps','')}")
+
             col_x, col_y = st.columns(2)
             with col_x:
                 country_name = st.selectbox("Country to search in", list(COUNTRY_CODES.keys()))
@@ -526,6 +549,12 @@ elif st.session_state.step == 4:
                     with st.spinner("Searching real job listings..."):
                         country_code = COUNTRY_CODES[country_name]
                         roles = suggestions.get("suggested_roles", []) or ["business analyst"]
+                        # widen search with real employers who actually hired LBS grads
+                        # into similar roles (grounds the search, not just the reasoning)
+                        real_stats = offers_summary_stats(
+                            suggestions.get("suggested_industries", []) + roles
+                        )
+                        roles = roles + real_stats.get("top_employers", [])[:3]
                         all_found, all_errors = [], []
                         seen_keys = set()
 
