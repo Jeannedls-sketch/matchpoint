@@ -12,8 +12,9 @@ against real data) — but surfaced live in the app, not in a spreadsheet.
 
 import csv
 import os
+from pathlib import Path
 
-_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
 _offers_cache = None
 _paths_cache = None
@@ -107,6 +108,25 @@ def load_strengths_statements() -> list:
         with open(path, encoding="utf-8") as f:
             _strengths_cache = list(csv.DictReader(f))
     return _strengths_cache
+
+
+def category_averages(ratings: dict) -> dict:
+    """
+    Given the candidate's {statement: 0-6 score} ratings from Step 3, returns
+    {category: average score} across the 10 real categories — used to draw
+    a radar chart of strength areas on the Dashboard.
+
+    Categories the candidate never rated (no matching statement scored) are
+    left out rather than shown as 0, so the chart reflects what was actually
+    answered.
+    """
+    statements = load_strengths_statements()
+    by_category = {}
+    for s in statements:
+        cat, stmt = s["category"], s["statement"]
+        if stmt in ratings:
+            by_category.setdefault(cat, []).append(ratings[stmt])
+    return {cat: sum(vals) / len(vals) for cat, vals in by_category.items() if vals}
 
 
 # --- lightweight, keyword-based sector categorization of the 800 real offers ---
