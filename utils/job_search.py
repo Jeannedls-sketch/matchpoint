@@ -74,21 +74,24 @@ def search_jobs(query: str, country_code: str, where: str = "", results: int = 1
     return listings
 
 
-def search_multiple_roles(roles: list, country_code: str, where: str = "", per_role: int = 6) -> list:
+def search_multiple_roles(roles: list, country_code: str, where: str = "", per_role: int = 6) -> tuple:
     """
     Runs one Adzuna search per suggested role, merges and de-duplicates results
-    by adzuna_id (or title+company if id missing). Returns a flat list of
-    real, unique listings ready to be scored/categorized by Claude.
+    by adzuna_id (or title+company if id missing).
+
+    Returns a tuple: (list of unique listings, list of error strings encountered).
     """
     seen = set()
     merged = []
+    errors = []
     for role in roles:
         results = search_jobs(role, country_code, where, results=per_role)
         for job in results:
             if "_error" in job:
+                errors.append(f"{role}: {job['_error']}")
                 continue
             key = job.get("adzuna_id") or f"{job['title']}|||{job['company']}"
             if key not in seen:
                 seen.add(key)
                 merged.append(job)
-    return merged
+    return merged, errors
