@@ -91,3 +91,59 @@ def offers_summary_stats(keywords: list) -> dict:
         "top_employers": [e for e, _ in employers.most_common(5)],
         "top_cities": [c for c, _ in cities.most_common(3)],
     }
+
+
+# --- Step 3: real strengths statement bank (LBS Career Centre worksheet, 40 statements / 10 categories) ---
+
+_strengths_cache = None
+
+
+def load_strengths_statements() -> list:
+    """Loads the real 40-statement / 10-category strengths bank used in the
+    LBS Career Centre workshop (Exercise 4, 'Listen and Score', 0-6 scale)."""
+    global _strengths_cache
+    if _strengths_cache is None:
+        path = os.path.join(_DATA_DIR, "strengths_statements.csv")
+        with open(path, encoding="utf-8") as f:
+            _strengths_cache = list(csv.DictReader(f))
+    return _strengths_cache
+
+
+# --- lightweight, keyword-based sector categorization of the 800 real offers ---
+# (no LLM call needed for 800 rows; approximate but transparent and fast)
+
+_SECTOR_KEYWORDS = {
+    "Consulting": ["consult", "mckinsey", "bcg", "boston consulting", "bain", "strategy&",
+                   "roland berger", "oliver wyman", "kearney", "deloitte", "pwc", "kpmg", "ey "],
+    "Finance & Banking": ["bank", "capital", "asset management", "hedge fund", "private equity",
+                           "investment", "wealth", "financial", "trading", "markets", "morgan",
+                           "goldman", "jpmorgan", "jp morgan", "hsbc", "credit", "citi"],
+    "Tech": ["software", "data", "digital", "tech", "google", "amazon", "microsoft", "meta",
+             "apple", "ai ", "analytics", "engineer"],
+    "FMCG & Retail": ["retail", "fmcg", "consumer", "luxury", "brand", "p&g", "procter", "unilever",
+                       "loreal", "l'oreal", "nike"],
+    "Industrials & Energy": ["energy", "industrial", "manufactur", "logistics", "supply chain",
+                              "airbus", "siemens", "oil", "renewable"],
+}
+
+
+def categorize_offer_sector(job_title: str, employer: str) -> str:
+    """Keyword-based sector bucket for one real offer row. Approximate, not
+    LLM-verified — used only for an aggregate chart, labeled as such."""
+    haystack = f"{job_title or ''} {employer or ''}".lower()
+    for sector, kws in _SECTOR_KEYWORDS.items():
+        if any(kw in haystack for kw in kws):
+            return sector
+    return "Other"
+
+
+def sector_breakdown() -> dict:
+    """Counts all 800 real offers into approximate sector buckets, for a
+    demo chart grounded in real (if roughly bucketed) outcomes data."""
+    offers = _load_offers()
+    from collections import Counter
+    counts = Counter(
+        categorize_offer_sector(o.get("job_title", ""), o.get("employer", ""))
+        for o in offers
+    )
+    return dict(counts)
