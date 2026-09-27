@@ -13,6 +13,7 @@ from utils.claude_client import (
     adjust_suggestions,
     score_and_categorize_jobs,
     tailor_application,
+    suggest_cv_keywords,
 )
 from utils.pdf_generator import generate_cv_pdf, generate_cover_letter_pdf
 from utils.job_search import search_multiple_roles, COUNTRY_CODES
@@ -172,8 +173,8 @@ if not st.session_state.started:
         unsafe_allow_html=True,
     )
     st.write(
-        "Matchpoint gets to know you — your story, your strengths, what you value — "
-        "then finds real roles that actually fit, and helps you apply."
+        "Matchpoint gets to know you: your story, your strengths, what you value. "
+        "Then it finds real roles that actually fit, and helps you apply."
     )
     st.write("")
     if st.button("Start →", type="primary"):
@@ -288,7 +289,7 @@ if st.session_state.step == 1:
         if experience:
             for exp in experience:
                 with st.container(border=True):
-                    st.markdown(f"**{exp.get('role', '')}** — {exp.get('company', '')}")
+                    st.markdown(f"**{exp.get('role', '')}**, {exp.get('company', '')}")
                     st.caption(exp.get("dates", ""))
                     for h in exp.get("highlights", []):
                         st.markdown(f"- {h}")
@@ -300,25 +301,23 @@ if st.session_state.step == 1:
 
         st.divider()
 
-        # --- 1.b: if interests unclear, ask directly ---
+        # --- 1.b: always ask for interests — pre-fill from doc if already found ---
         if not profile.get("interests_clear", False):
             st.warning("Your documents don't clearly state what you're looking for next.")
-            interests_input = st.text_area(
-                "What kind of work are you looking for? Name an industry, a job title, or both.",
-                placeholder="e.g. strategy consulting, Business Analyst, sustainability, Product Manager, luxury retail...",
-            )
-            if st.button("Save my interests and continue →"):
-                st.session_state.profile["stated_interests"] = [
-                    i.strip() for i in interests_input.split(",") if i.strip()
-                ]
-                st.session_state.profile["interests_clear"] = True
-                st.session_state.step = 2
-                st.rerun()
         else:
-            st.write("**Stated interests:**", ", ".join(profile.get("stated_interests", [])))
-            if st.button("Continue to Step 2 →", type="primary"):
-                st.session_state.step = 2
-                st.rerun()
+            st.write("**We picked up on:**", ", ".join(profile.get("stated_interests", [])))
+
+        interests_input = st.text_area(
+            "Any industries, job titles, or preferences to add? (optional if we already found some above)",
+            placeholder="e.g. strategy consulting, Business Analyst, sustainability, Product Manager, luxury retail...",
+        )
+        if st.button("Continue to Step 2 →", type="primary"):
+            existing = profile.get("stated_interests", []) if profile.get("interests_clear") else []
+            added = [i.strip() for i in interests_input.split(",") if i.strip()]
+            st.session_state.profile["stated_interests"] = existing + added
+            st.session_state.profile["interests_clear"] = True
+            st.session_state.step = 2
+            st.rerun()
 
 # ============================================================
 # STEP 2 — YOUR STORY
@@ -511,7 +510,10 @@ elif st.session_state.step == 4:
             with col_x:
                 country_name = st.selectbox("Country to search in", list(COUNTRY_CODES.keys()))
             with col_y:
-                city = st.text_input("City (optional)", placeholder="e.g. London, Paris")
+                cities_input = st.text_input(
+                    "City or cities (optional, comma-separated)", placeholder="e.g. London, Paris"
+                )
+            cities = [c.strip() for c in cities_input.split(",") if c.strip()] or [""]
 
             col_a, col_b = st.columns([1, 1])
             with col_a:
@@ -519,16 +521,25 @@ elif st.session_state.step == 4:
                     with st.spinner("Searching real job listings..."):
                         country_code = COUNTRY_CODES[country_name]
                         roles = suggestions.get("suggested_roles", []) or ["business analyst"]
-                        real_jobs, search_errors = search_multiple_roles(roles, country_code, where=city)
-                        if not real_jobs:
+                        all_found, all_errors = [], []
+                        seen_keys = set()
+                        for city in cities:
+                            found, errs = search_multiple_roles(roles, country_code, where=city)
+                            all_errors.extend(errs)
+                            for job in found:
+                                key = job.get("adzuna_id") or f"{job['title']}|||{job['company']}"
+                                if key not in seen_keys:
+                                    seen_keys.add(key)
+                                    all_found.append(job)
+                        if not all_found:
                             st.session_state.job_listings = []
-                            st.session_state.last_search_errors = search_errors
+                            st.session_state.last_search_errors = all_errors
                             st.warning("No real listings found for these roles/location. Try a broader city or fewer filters.")
-                            if search_errors:
-                                st.error(f"Adzuna error: {search_errors[0]}")
+                            if all_errors:
+                                st.error(f"Adzuna error: {all_errors[0]}")
                         else:
                             st.session_state.job_listings = score_and_categorize_jobs(
-                                real_jobs, st.session_state.profile, suggestions
+                                all_found, st.session_state.profile, suggestions
                             )
                     st.rerun()
             with col_b:
@@ -651,6 +662,7 @@ elif st.session_state.step == 4:
                                     entry["cl_pdf"] = generate_cover_letter_pdf(
                                         tailored.get("cover_letter", ""), st.session_state.profile, job
                                     )
+                                    entry["keywords"] = suggest_cv_keywords(job, st.session_state.profile)
                                 st.session_state.tailored_applications[job_key] = entry
                                 status["cv_generated"] = True
                             st.rerun()
@@ -686,6 +698,17 @@ elif st.session_state.step == 4:
                                         file_name=f"CoverLetter_{job.get('company')}.pdf", mime="application/pdf",
                                         key=f"dl_cl_{job_key}",
                                     )
+
+                            kw_data = entry.get("keywords", {})
+                            kw_list = kw_data.get("keywords", []) if "error" not in kw_data else []
+                            if kw_list:
+                                with st.expander("Keywords to work into your CV for this job"):
+                                    for kw in kw_list:
+                                        st.markdown(f"**{kw.get('keyword', '')}** (add to: {kw.get('where_to_place', '')})")
+                                        syns = kw.get("synonyms", [])
+                                        if syns:
+                                            st.caption("Rephrasing ideas: " + ", ".join(syns))
+
 
                             if not status["applied"]:
                                 if st.button("Mark as applied ✔", key=f"apply_{job_key}"):
@@ -799,6 +822,16 @@ elif st.session_state.step == 5:
                                 file_name=f"CoverLetter_{job.get('company')}.pdf", mime="application/pdf",
                                 key=f"dash_dl_cl_{job_key}",
                             )
+
+                    kw_data = entry.get("keywords", {})
+                    kw_list = kw_data.get("keywords", []) if "error" not in kw_data else []
+                    if kw_list:
+                        st.markdown("**Keywords to work into your CV**")
+                        for kw in kw_list:
+                            st.markdown(f"- **{kw.get('keyword', '')}** (add to: {kw.get('where_to_place', '')})")
+                            syns = kw.get("synonyms", [])
+                            if syns:
+                                st.caption("Rephrasing ideas: " + ", ".join(syns))
 
     if st.button("← Back to Step 4"):
         st.session_state.step = 4
