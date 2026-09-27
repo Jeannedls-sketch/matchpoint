@@ -528,14 +528,36 @@ elif st.session_state.step == 4:
                         roles = suggestions.get("suggested_roles", []) or ["business analyst"]
                         all_found, all_errors = [], []
                         seen_keys = set()
-                        for city in cities:
-                            found, errs = search_multiple_roles(roles, country_code, where=city)
-                            all_errors.extend(errs)
+
+                        def _merge(found):
                             for job in found:
                                 key = job.get("adzuna_id") or f"{job['title']}|||{job['company']}"
                                 if key not in seen_keys:
                                     seen_keys.add(key)
                                     all_found.append(job)
+
+                        for city in cities:
+                            found, errs = search_multiple_roles(roles, country_code, where=city)
+                            all_errors.extend(errs)
+                            _merge(found)
+
+                        # fallback: if specific role titles returned nothing, widen to
+                        # the suggested industries, then to generic terms — a demo
+                        # should never come back completely empty
+                        if not all_found:
+                            industries = suggestions.get("suggested_industries", [])
+                            for city in cities:
+                                found, errs = search_multiple_roles(industries, country_code, where=city)
+                                all_errors.extend(errs)
+                                _merge(found)
+                        if not all_found:
+                            for city in cities:
+                                found, errs = search_multiple_roles(
+                                    ["consultant", "analyst", "manager"], country_code, where=city
+                                )
+                                all_errors.extend(errs)
+                                _merge(found)
+
                         if not all_found:
                             st.session_state.job_listings = []
                             st.session_state.last_search_errors = all_errors
