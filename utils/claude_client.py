@@ -174,13 +174,14 @@ Respond ONLY with valid JSON:
 
 def generate_strengths_report(ratings: dict, profile: dict, story_analysis: dict) -> dict:
     """
-    Step 3: given the candidate's 1-5 self-ratings on a list of strengths,
-    generate a short report. Low ratings (<=2) become candidate "growth areas"
-    (framed constructively, not as "weaknesses" bluntly); high ratings (>=4)
-    are confirmed as core strengths. If everything is rated high, growth_areas
-    can be an empty list - that's a valid outcome, not an error.
+    Step 3: given the candidate's 0-6 self-ratings on the LBS Career Centre's
+    real 40-statement strengths framework, generate a short report. Low
+    ratings (<=2) become candidate "growth areas" (framed constructively, not
+    as "weaknesses" bluntly); high ratings (>=5) are confirmed as core
+    strengths. If everything is rated high, growth_areas can be an empty
+    list - that's a valid outcome, not an error.
 
-    ratings: dict of {strength_label: int (1-5)}
+    ratings: dict of {statement: int (0-6)}
 
     Returns:
         {
@@ -189,15 +190,19 @@ def generate_strengths_report(ratings: dict, profile: dict, story_analysis: dict
             "narrative": string   # 2-3 sentence overview tying it together
         }
     """
-    system_prompt = """You are a career coach reviewing a candidate's self-ratings (1-5 scale,
-5 = very strong) on a set of strengths, in the context of their background and
-a story they told about a moment they were at their best.
+    system_prompt = """You are a career coach reviewing a candidate's self-ratings (0-6 scale,
+6 = very much me, 0 = not me at all) on the LBS Career Centre's real strengths
+framework, in the context of their background and a story they told about a
+moment they were at their best.
 
 Produce:
-- "confirmed_strengths": labels rated 4-5, framed as genuine strengths
-- "growth_areas": labels rated 1-2, each with a short constructive "note"
-  (never harsh, framed as development opportunities, not deficiencies).
-  If nothing was rated 1-2, return an empty list - do not invent weaknesses.
+- "confirmed_strengths": statements rated 5-6, reworded into short, natural
+  strength labels (e.g. "Enjoys solving complex or ambiguous problems" ->
+  "Problem-solving")
+- "growth_areas": statements rated 0-2, each reworded into a short label with
+  a constructive "note" (never harsh, framed as development opportunities,
+  not deficiencies). If nothing was rated 0-2, return an empty list - do not
+  invent weaknesses.
 - "narrative": 2-3 warm, honest sentences tying the ratings together in the
   context of their story and background.
 
@@ -207,9 +212,9 @@ Respond ONLY with valid JSON:
     user_content = (
         f"Candidate background:\n{json.dumps(profile, ensure_ascii=False)}\n\n"
         f"Their story summary: {story_analysis.get('summary', '')}\n\n"
-        f"Self-ratings (1-5):\n{json.dumps(ratings, ensure_ascii=False)}"
+        f"Self-ratings (0-6 scale):\n{json.dumps(ratings, ensure_ascii=False)}"
     )
-    return _call_json(system_prompt, user_content)
+    return _call_json(system_prompt, user_content, max_tokens=2000)
 
 
 def suggest_industries_and_roles(profile: dict, story_analysis: dict, strengths_report: dict, values_answers: dict) -> dict:
@@ -348,6 +353,47 @@ Respond ONLY with valid JSON:
         f"Job:\n{json.dumps(approved_job, ensure_ascii=False)}\n\n"
         f"Candidate profile:\n{json.dumps(profile, ensure_ascii=False)}\n\n"
         f"Story summary: {story_analysis.get('summary', '')}\n"
+        f"Writing tone notes: {profile.get('writing_tone_notes', 'not specified')}"
+    )
+    return _call_json(system_prompt, user_content, max_tokens=2000)
+
+
+def tailor_cv_edits(original_cv_text: str, job: dict, profile: dict) -> dict:
+    """
+    Step 5 (real-file editing path): instead of generating a fresh CV, propose
+    exact find/replace edits to the CANDIDATE'S OWN uploaded CV text — reword
+    or reorder existing bullets to foreground what matters for this job,
+    without inventing anything not already in the document.
+
+    Returns:
+        {"edits": [{"find": string, "replace": string}], "cover_letter": string}
+
+    "find" MUST be an exact, verbatim substring of original_cv_text (so it can
+    be located and replaced in the real .docx file, preserving its formatting).
+    """
+    system_prompt = """You are editing a candidate's REAL CV in place for one specific job.
+You will be given the exact text extracted from their real CV document, plus
+the job details.
+
+Produce a small list of targeted edits:
+- "find": a short EXACT substring copied verbatim from the CV text provided
+  (a single bullet or sentence - not a whole paragraph). It must match the
+  source text exactly, character for character, so it can be located and
+  replaced in the real file.
+- "replace": the reworded version of that same bullet, foregrounding what
+  matters for this job. Never invent achievements, numbers, or responsibilities
+  not already present in the original text - only reword/reorder what's real.
+
+Propose 3-6 such edits (the bullets most worth rewording for this job).
+Also write a plain-text cover letter (3-4 paragraphs) for this job, in the
+candidate's captured writing tone if available.
+
+Respond ONLY with valid JSON:
+{"edits": [{"find": string, "replace": string}], "cover_letter": string}"""
+
+    user_content = (
+        f"Job:\n{json.dumps(job, ensure_ascii=False)}\n\n"
+        f"Candidate's real CV text (verbatim, extracted from their document):\n{original_cv_text}\n\n"
         f"Writing tone notes: {profile.get('writing_tone_notes', 'not specified')}"
     )
     return _call_json(system_prompt, user_content, max_tokens=2000)
