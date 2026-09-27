@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 from dotenv import load_dotenv
 
 from utils.document_parser import extract_all
@@ -15,11 +16,12 @@ from utils.claude_client import (
     tailor_application,
     suggest_cv_keywords,
     tailor_cv_edits,
+    generate_fit_summary,
 )
 from utils.pdf_generator import generate_cv_pdf, generate_cover_letter_pdf
 from utils.docx_editor import edit_cv_docx
 from utils.job_search import search_multiple_roles, COUNTRY_CODES
-from utils.career_data import offers_summary_stats, load_strengths_statements
+from utils.career_data import offers_summary_stats, load_strengths_statements, category_averages
 
 load_dotenv()
 
@@ -129,6 +131,8 @@ if "cv_docx_name" not in st.session_state:
     st.session_state.cv_docx_name = None
 if "cv_raw_text" not in st.session_state:
     st.session_state.cv_raw_text = ""
+if "fit_summary" not in st.session_state:
+    st.session_state.fit_summary = None
 if "profile" not in st.session_state:
     st.session_state.profile = None
 if "backup_questions" not in st.session_state:
@@ -735,6 +739,7 @@ elif st.session_state.step == 4:
                                         "cv_highlights": [e.get("replace", "") for e in cv_edits.get("edits", [])],
                                         "cover_letter": cv_edits.get("cover_letter", ""),
                                     }
+                                    entry["cv_edits_raw"] = cv_edits.get("edits", [])
                                     if "error" not in cv_edits:
                                         edited_bytes, applied_count = edit_cv_docx(
                                             st.session_state.cv_docx_bytes, cv_edits.get("edits", [])
@@ -775,9 +780,24 @@ elif st.session_state.step == 4:
                                 st.caption(f"Edited your real CV in place ({entry.get('cv_edits_applied', 0)} bullet(s) reworded).")
                             col_a, col_b = st.columns(2)
                             with col_a:
-                                st.write("**CV highlights**")
-                                for h in tailored.get("cv_highlights", []):
-                                    st.write(f"- {h}")
+                                raw_edits = entry.get("cv_edits_raw")
+                                if raw_edits:
+                                    st.write("**What changed in your CV**")
+                                    for e in raw_edits:
+                                        find, replace = e.get("find", ""), e.get("replace", "")
+                                        if not find or not replace:
+                                            continue
+                                        st.markdown(
+                                            f"""<div style="border-left: 3px solid var(--border); padding-left: 0.7rem; margin-bottom: 0.8rem;">
+                                            <p style="color: var(--muted); font-size: 0.85rem; text-decoration: line-through; margin: 0 0 0.2rem 0;">{find}</p>
+                                            <p style="color: var(--accent); font-weight: 500; margin: 0;">{replace}</p>
+                                            </div>""",
+                                            unsafe_allow_html=True,
+                                        )
+                                else:
+                                    st.write("**CV highlights**")
+                                    for h in tailored.get("cv_highlights", []):
+                                        st.write(f"- {h}")
                                 if "cv_docx" in entry:
                                     st.download_button(
                                         "⬇ Download your edited CV (DOCX)", data=entry["cv_docx"],
@@ -841,6 +861,26 @@ elif st.session_state.step == 5:
     applications = st.session_state.tailored_applications
     all_jobs = st.session_state.job_listings or []
 
+    # --- career fit summary: one punchy line synthesizing the whole journey ---
+    if st.session_state.fit_summary is None:
+        with st.spinner("Summarizing your profile..."):
+            result = generate_fit_summary(
+                st.session_state.profile,
+                st.session_state.story_analysis,
+                st.session_state.strengths_report,
+                st.session_state.suggestions or {},
+            )
+            st.session_state.fit_summary = result.get("summary", "")
+
+    if st.session_state.fit_summary:
+        st.markdown(
+            f"""<div style="background: linear-gradient(135deg, var(--accent) 0%, #7C3AED 100%);
+            border-radius: 12px; padding: 1.4rem 1.6rem; margin-bottom: 1.2rem;">
+            <p style="color: white; font-size: 1.15rem; font-weight: 600; margin: 0; line-height: 1.5;">
+            {st.session_state.fit_summary}</p></div>""",
+            unsafe_allow_html=True,
+        )
+
     interested_count = sum(1 for j in all_jobs if st.session_state.job_status.get(_job_key(j), {}).get("interested") is True)
     applied_count = sum(1 for s in st.session_state.job_status.values() if s.get("applied"))
 
@@ -853,15 +893,39 @@ elif st.session_state.step == 5:
 
     st.divider()
 
-    # --- match score chart, colored by category ---
-    if all_jobs:
-        df = pd.DataFrame(all_jobs)
-        fig = px.bar(
-            df, x="title", y="match_score", color="category",
-            title="Match scores across reviewed jobs",
-        )
-        fig.update_layout(xaxis_title="", yaxis_title="Match %")
-        st.plotly_chart(fig, use_container_width=True)
+    # --- strengths radar (real 10-category framework) + match score chart, side by side ---
+    col_radar, col_bar = st.columns(2)
+
+    with col_radar:
+        cat_avgs = category_averages(st.session_state.strengths_ratings)
+        if cat_avgs:
+            categories = list(cat_avgs.keys())
+            values = list(cat_avgs.values())
+            radar_fig = go.Figure()
+            radar_fig.add_trace(go.Scatterpolar(
+                r=values + [values[0]],
+                theta=categories + [categories[0]],
+                fill="toself",
+                fillcolor="rgba(79, 70, 229, 0.25)",
+                line=dict(color="#4F46E5", width=2),
+            ))
+            radar_fig.update_layout(
+                polar=dict(radialaxis=dict(visible=True, range=[0, 6])),
+                showlegend=False,
+                title="Your strengths, by category",
+                margin=dict(l=40, r=40, t=60, b=40),
+            )
+            st.plotly_chart(radar_fig, use_container_width=True)
+
+    with col_bar:
+        if all_jobs:
+            df = pd.DataFrame(all_jobs)
+            fig = px.bar(
+                df, x="title", y="match_score", color="category",
+                title="Match scores across reviewed jobs",
+            )
+            fig.update_layout(xaxis_title="", yaxis_title="Match %")
+            st.plotly_chart(fig, use_container_width=True)
 
     st.divider()
 
@@ -907,9 +971,24 @@ elif st.session_state.step == 5:
                 else:
                     col_a, col_b = st.columns(2)
                     with col_a:
-                        st.write("**CV highlights**")
-                        for h in tailored.get("cv_highlights", []):
-                            st.write(f"- {h}")
+                        raw_edits = entry.get("cv_edits_raw")
+                        if raw_edits:
+                            st.write("**What changed in your CV**")
+                            for e in raw_edits:
+                                find, replace = e.get("find", ""), e.get("replace", "")
+                                if not find or not replace:
+                                    continue
+                                st.markdown(
+                                    f"""<div style="border-left: 3px solid var(--border); padding-left: 0.7rem; margin-bottom: 0.8rem;">
+                                    <p style="color: var(--muted); font-size: 0.85rem; text-decoration: line-through; margin: 0 0 0.2rem 0;">{find}</p>
+                                    <p style="color: var(--accent); font-weight: 500; margin: 0;">{replace}</p>
+                                    </div>""",
+                                    unsafe_allow_html=True,
+                                )
+                        else:
+                            st.write("**CV highlights**")
+                            for h in tailored.get("cv_highlights", []):
+                                st.write(f"- {h}")
                         if "cv_docx" in entry:
                             st.download_button(
                                 "⬇ Download your edited CV (DOCX)", data=entry["cv_docx"],
