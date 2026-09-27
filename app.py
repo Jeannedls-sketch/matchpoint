@@ -115,6 +115,8 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 # --- session state init ---
 if "step" not in st.session_state:
     st.session_state.step = 1
+if "started" not in st.session_state:
+    st.session_state.started = False
 if "profile" not in st.session_state:
     st.session_state.profile = None
 if "backup_questions" not in st.session_state:
@@ -163,8 +165,21 @@ if "application_log" not in st.session_state:
 st.title("Matchpoint")
 st.caption("Your AI job-matching and application agent")
 
-st.title("Matchpoint")
-st.caption("Your AI job-matching and application agent")
+# --- landing screen: shown once, before the step flow starts ---
+if not st.session_state.started:
+    st.markdown(
+        "<h2 style='margin-top:0.5rem;'>Stop guessing what fits. Start knowing.</h2>",
+        unsafe_allow_html=True,
+    )
+    st.write(
+        "Matchpoint gets to know you — your story, your strengths, what you value — "
+        "then finds real roles that actually fit, and helps you apply."
+    )
+    st.write("")
+    if st.button("Start →", type="primary"):
+        st.session_state.started = True
+        st.rerun()
+    st.stop()
 
 # --- step indicator: pill-style, colored for current/done ---
 STEP_PILL_CSS = """
@@ -245,31 +260,52 @@ if st.session_state.step == 1:
     # if profile already built, show it and let user proceed / clarify interests
     if st.session_state.profile and "error" not in st.session_state.profile:
         profile = st.session_state.profile
-        st.subheader("Here's what we found")
 
-        with st.expander("Extracted profile", expanded=True):
-            st.write(f"**Name:** {profile.get('name', 'Not specified')}")
+        st.success("Profile built successfully")
+        st.markdown(f"## {profile.get('name', 'Your profile')}")
 
-            st.write("**Education:**")
-            for edu in profile.get("education", []):
-                st.write(f"- {edu.get('degree', '')}, {edu.get('institution', '')} ({edu.get('dates', '')})")
+        col_edu, col_exp = st.columns(2)
+        with col_edu:
+            st.markdown("**Education**")
+            education = profile.get("education", [])
+            if education:
+                for edu in education:
+                    st.markdown(f"**{edu.get('degree', '')}**")
+                    st.caption(f"{edu.get('institution', '')} · {edu.get('dates', '')}")
+            else:
+                st.caption("Not found in documents")
 
-            st.write("**Experience:**")
-            for exp in profile.get("experience", []):
-                st.write(f"- **{exp.get('role', '')}**, {exp.get('company', '')} ({exp.get('dates', '')})")
-                for h in exp.get("highlights", []):
-                    st.write(f"  - {h}")
+        with col_exp:
+            st.markdown("**Skills**")
+            skills = profile.get("skills", [])
+            st.write(", ".join(skills) if skills else "Not specified")
+            st.markdown("**Certifications**")
+            certs = profile.get("certifications", [])
+            st.write(", ".join(certs) if certs else "None listed")
 
-            st.write("**Skills:**", ", ".join(profile.get("skills", [])) or "Not specified")
-            st.write("**Certifications:**", ", ".join(profile.get("certifications", [])) or "None listed")
-            st.write("**Writing tone notes:**", profile.get("writing_tone_notes", "Not enough data"))
+        st.markdown("**Experience**")
+        experience = profile.get("experience", [])
+        if experience:
+            for exp in experience:
+                with st.container(border=True):
+                    st.markdown(f"**{exp.get('role', '')}** — {exp.get('company', '')}")
+                    st.caption(exp.get("dates", ""))
+                    for h in exp.get("highlights", []):
+                        st.markdown(f"- {h}")
+        else:
+            st.caption("Not found in documents")
+
+        with st.expander("Writing tone notes (used later to tailor cover letters)"):
+            st.write(profile.get("writing_tone_notes", "Not enough data"))
+
+        st.divider()
 
         # --- 1.b: if interests unclear, ask directly ---
         if not profile.get("interests_clear", False):
             st.warning("Your documents don't clearly state what you're looking for next.")
             interests_input = st.text_area(
-                "What are you actually interested in? (industries, roles, anything on your mind)",
-                placeholder="e.g. strategy consulting, sustainability, luxury retail...",
+                "What kind of work are you looking for? Name an industry, a job title, or both.",
+                placeholder="e.g. strategy consulting, Business Analyst, sustainability, Product Manager, luxury retail...",
             )
             if st.button("Save my interests and continue →"):
                 st.session_state.profile["stated_interests"] = [
@@ -483,10 +519,13 @@ elif st.session_state.step == 4:
                     with st.spinner("Searching real job listings..."):
                         country_code = COUNTRY_CODES[country_name]
                         roles = suggestions.get("suggested_roles", []) or ["business analyst"]
-                        real_jobs = search_multiple_roles(roles, country_code, where=city)
+                        real_jobs, search_errors = search_multiple_roles(roles, country_code, where=city)
                         if not real_jobs:
                             st.session_state.job_listings = []
+                            st.session_state.last_search_errors = search_errors
                             st.warning("No real listings found for these roles/location. Try a broader city or fewer filters.")
+                            if search_errors:
+                                st.error(f"Adzuna error: {search_errors[0]}")
                         else:
                             st.session_state.job_listings = score_and_categorize_jobs(
                                 real_jobs, st.session_state.profile, suggestions
@@ -516,6 +555,9 @@ elif st.session_state.step == 4:
 
         if not all_jobs:
             st.warning("No real listings found for that search.")
+            errs = st.session_state.get("last_search_errors", [])
+            if errs:
+                st.error(f"Adzuna error: {errs[0]}")
             if st.button("← Try a different search"):
                 st.session_state.job_listings = None
                 st.rerun()
