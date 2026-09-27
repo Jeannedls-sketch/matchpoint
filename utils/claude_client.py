@@ -399,6 +399,36 @@ Respond ONLY with valid JSON:
     return _call_json(system_prompt, user_content, max_tokens=2000)
 
 
+def generate_fit_summary(profile: dict, story_analysis: dict, strengths_report: dict, suggestions: dict) -> dict:
+    """
+    Dashboard headline: one punchy sentence that captures who this candidate
+    is and what they're built for, synthesizing the whole journey (profile,
+    story, strengths, values) into a single confident line.
+
+    Returns: {"summary": string}
+    """
+    system_prompt = """You write one short, confident, specific sentence (max ~25 words) that
+captures who this candidate is and what kind of role they're genuinely built
+for — synthesizing their real story, confirmed strengths, and stated values.
+
+Style: direct, punchy, no generic corporate filler ("hardworking team player").
+Ground it in specifics from what's given (e.g. a trait from their story, a
+real confirmed strength, the type of role/industry they're aiming for).
+No dashes of any kind. No hashtags, no emoji.
+
+Respond ONLY with valid JSON: {"summary": string}"""
+
+    user_content = (
+        f"Profile: {json.dumps(profile, ensure_ascii=False)}\n\n"
+        f"Story summary: {story_analysis.get('summary', '')}\n"
+        f"Traits: {story_analysis.get('traits', [])}\n\n"
+        f"Confirmed strengths: {strengths_report.get('confirmed_strengths', [])}\n\n"
+        f"Suggested industries/roles: {suggestions.get('suggested_industries', [])} / "
+        f"{suggestions.get('suggested_roles', [])}"
+    )
+    return _call_json(system_prompt, user_content, max_tokens=300)
+
+
 def suggest_cv_keywords(job: dict, profile: dict) -> dict:
     """
     ATS-style keyword optimization: reads the real job description and the
