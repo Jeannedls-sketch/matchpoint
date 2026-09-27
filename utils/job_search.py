@@ -39,6 +39,11 @@ def search_jobs(query: str, country_code: str, where: str = "", results: int = 1
     Search Adzuna for real job listings matching `query` (a role/keyword string)
     in `country_code` (e.g. "gb", "us", "fr"), optionally narrowed to `where`
     (a city/region). Returns a list of raw listing dicts.
+
+    Uses "what_or" (loose match: any word) rather than "what" (strict match:
+    all words), since suggested role titles can be multi-word and specific
+    (e.g. "Corporate Strategy Analyst") — a strict AND match on all three
+    words returns far fewer real listings than a looser match would.
     """
     app_id, app_key = _get_credentials()
     url = f"{BASE_URL}/{country_code}/search/1"
@@ -46,7 +51,7 @@ def search_jobs(query: str, country_code: str, where: str = "", results: int = 1
         "app_id": app_id,
         "app_key": app_key,
         "results_per_page": results,
-        "what": query,
+        "what_or": query,
         "content-type": "application/json",
     }
     if where:
