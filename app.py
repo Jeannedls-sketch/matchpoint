@@ -151,7 +151,12 @@ if "step4_phase" not in st.session_state:
 
 
 def _job_key(job):
-    return f"{job.get('title')}|||{job.get('company')}"
+    # include adzuna_id when available (guaranteed unique), else fall back to
+    # title+company+location — needed because the same role can legitimately
+    # appear in multiple searched cities, which would otherwise collide.
+    if job.get("adzuna_id"):
+        return f"adzuna-{job['adzuna_id']}"
+    return f"{job.get('title')}|||{job.get('company')}|||{job.get('location')}"
 
 
 def _ensure_status(job_key):
