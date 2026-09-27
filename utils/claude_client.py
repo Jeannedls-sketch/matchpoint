@@ -351,3 +351,39 @@ Respond ONLY with valid JSON:
         f"Writing tone notes: {profile.get('writing_tone_notes', 'not specified')}"
     )
     return _call_json(system_prompt, user_content, max_tokens=2000)
+
+
+def suggest_cv_keywords(job: dict, profile: dict) -> dict:
+    """
+    ATS-style keyword optimization: reads the real job description and the
+    candidate's real profile, and suggests which keywords from the job
+    posting the candidate should work into their CV — where to place them,
+    and synonyms/phrasings already implied by the candidate's real
+    experience (never invents skills they don't have).
+
+    Returns:
+        {"keywords": [{"keyword": string, "where_to_place": string, "synonyms": [string]}]}
+    """
+    system_prompt = """You are an ATS (applicant tracking system) optimization assistant.
+Compare the real job description to the candidate's real profile, and identify
+5-8 important keywords/phrases from the job posting that the candidate should
+make sure appear in their CV.
+
+For each keyword:
+- "keyword": the exact term/phrase from the job posting
+- "where_to_place": a short suggestion of which CV section to add it to
+  (e.g. "Skills section", "Kearney internship bullet", "Summary line") -
+  base this on the candidate's REAL experience, don't invent a place that
+  doesn't fit their background
+- "synonyms": 1-3 alternate phrasings already implied by the candidate's
+  real experience/skills that could be reworded to include this keyword
+  naturally (never invent a skill they don't have - only reword what's real)
+
+Respond ONLY with valid JSON:
+{"keywords": [{"keyword": string, "where_to_place": string, "synonyms": [string]}]}"""
+
+    user_content = (
+        f"Job posting:\n{json.dumps(job, ensure_ascii=False)}\n\n"
+        f"Candidate's real profile:\n{json.dumps(profile, ensure_ascii=False)}"
+    )
+    return _call_json(system_prompt, user_content, max_tokens=1500)
