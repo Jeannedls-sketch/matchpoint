@@ -321,7 +321,53 @@ Respond ONLY with valid JSON:
     return jobs
 
 
-def tailor_application(approved_job: dict, profile: dict, story_analysis: dict) -> dict:
+def score_and_categorize_jobs(jobs: list, profile: dict, suggestions: dict) -> list:
+    """
+    Takes REAL job listings (from Adzuna) and, for each, assigns a category
+    ("Consulting", "Finance", "Tech", "Other") and a match score (0-100) with
+    a one-sentence reason, based on the candidate's profile. Does not alter
+    or invent listing content — only annotates real listings.
+
+    jobs: list of dicts with at least "title", "company", "description"
+    Returns the same list with "category", "match_score", "match_reason" added.
+    """
+    if not jobs:
+        return []
+
+    # send a compact index-based list to keep tokens down; descriptions already trimmed upstream
+    compact = [
+        {"i": i, "title": j.get("title", ""), "company": j.get("company", ""), "description": j.get("description", "")}
+        for i, j in enumerate(jobs)
+    ]
+
+    system_prompt = """You are scoring REAL job listings against a candidate's profile for a
+career-matching tool. For each listing (identified by its "i" index), assign:
+- "category": one of "Consulting", "Finance", "Tech", "Other"
+- "match_score": integer 0-100, how well it fits the candidate
+- "match_reason": one short sentence explaining the score
+
+Do not alter or invent anything about the listings themselves - only score them.
+
+Respond ONLY with valid JSON:
+{"scored": [{"i": integer, "category": string, "match_score": integer, "match_reason": string}, ...]}"""
+
+    user_content = (
+        f"Candidate profile:\n{json.dumps(profile, ensure_ascii=False)}\n\n"
+        f"Suggested industries/roles: {suggestions.get('suggested_industries', [])} / "
+        f"{suggestions.get('suggested_roles', [])}\n\n"
+        f"Listings:\n{json.dumps(compact, ensure_ascii=False)}"
+    )
+    result = _call_json(system_prompt, user_content, max_tokens=3000)
+    scores_by_i = {s["i"]: s for s in result.get("scored", [])} if "error" not in result else {}
+
+    for i, job in enumerate(jobs):
+        s = scores_by_i.get(i, {})
+        job["category"] = s.get("category", "Other")
+        job["match_score"] = s.get("match_score", 50)
+        job["match_reason"] = s.get("match_reason", "")
+
+    jobs.sort(key=lambda j: j.get("match_score", 0), reverse=True)
+    return jobs
     """
     Step 5: generate a tailored CV summary (bullet highlights reordered/reworded
     to fit the approved job) and a tailored cover letter, matching the
